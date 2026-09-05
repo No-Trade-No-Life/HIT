@@ -9,5 +9,5 @@ import App from "./App"
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 5_000 } } })
 
 createRoot(document.getElementById("root")!).render(
-  <StrictMode><QueryClientProvider client={queryClient}><AuthMiniProvider authMiniBaseUrl="https://auth.ntnl.io" autoRedirectToLogin><App /></AuthMiniProvider></QueryClientProvider></StrictMode>,
+  <StrictMode><QueryClientProvider client={queryClient}><AuthMiniProvider authMiniBaseUrl="https://auth.ntnl.io" audiences={["hit.ntnl.io", "linkit.ntnl.io"]} autoRedirectToLogin><App /></AuthMiniProvider></QueryClientProvider></StrictMode>,
 )
