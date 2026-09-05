@@ -374,6 +374,21 @@ impl Database {
         self.get_trader(id)
     }
 
+    pub fn set_trader_signal(
+        &self,
+        id: &str,
+        signal: &Value,
+    ) -> Result<Option<Trader>, DatabaseError> {
+        let changed = self.connection()?.execute(
+            "UPDATE traders SET signal_json = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, serde_json::to_string(signal)?, now()],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        self.get_trader(id)
+    }
+
     pub fn delete_trader(&self, id: &str) -> Result<bool, DatabaseError> {
         Ok(self
             .connection()?
@@ -583,6 +598,35 @@ mod tests {
         assert_eq!(trader.status, "stopped");
         assert_eq!(trader.params, params);
         assert_eq!(trader.signal, signal);
+        Ok(())
+    }
+
+    #[test]
+    fn set_trader_signal_preserves_execution_configuration() -> Result<(), Box<dyn Error>> {
+        let state_directory = tempdir()?;
+        let database = Database::open(state_directory.path())?;
+        let credential = database.create_credential("owner", "binance", "primary", &json!({}))?;
+        let params = json!({"product_id":"BTCUSDT","max_order_qty":"0.01"});
+        let (trader, _) = database.create_trader(&TraderDraft {
+            owner_id: "owner".into(),
+            name: "alpha".into(),
+            template_id: "template".into(),
+            credential_id: credential.id.clone(),
+            params: params.clone(),
+            signal: json!({"target_qty":"1"}),
+            enabled: true,
+        })?;
+        let signal = json!({"target_qty":"2"});
+
+        let updated = database
+            .set_trader_signal(&trader.id, &signal)?
+            .expect("created trader exists");
+
+        assert_eq!(updated.signal, signal);
+        assert_eq!(updated.params, params);
+        assert_eq!(updated.credential_id, credential.id);
+        assert!(updated.enabled);
+        assert_eq!(updated.status, "starting");
         Ok(())
     }
 }
