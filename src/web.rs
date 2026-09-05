@@ -15,7 +15,8 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use crate::db::{
-    Credential, Database, DatabaseError, LinkitSettings, Trader, TraderDraft, TraderUpdate,
+    Credential, Database, DatabaseError, LinkitSettings, SignalHistory, Trader, TraderDraft,
+    TraderUpdate,
 };
 use crate::engine::{Template, TraderRuntime, template, templates, validate_configuration};
 
@@ -51,8 +52,8 @@ pub fn router(database: Database, runtime: TraderRuntime, auth: AuthMiniLayer) -
         )
         .route("/traders/{id}/enabled", patch(set_trader_enabled))
         .route("/traders/{id}/signal", patch(set_trader_signal))
+        .route("/traders/{id}/signal-history", get(list_signal_history))
         .route("/traders/{id}/signal-token", post(rotate_signal_token))
-        .route("/traders/{id}/runs", get(list_runs))
         .route("/linkit", get(get_linkit).put(put_linkit))
         .route_layer(auth);
     Router::new()
@@ -374,18 +375,18 @@ async fn rotate_signal_token(
     }))
 }
 
-async fn list_runs(
+async fn list_signal_history(
     State(state): State<AppState>,
     Extension(principal): Extension<AuthMiniPrincipal>,
     Path(id): Path<String>,
-) -> Result<Json<Vec<crate::db::Run>>, ApiError> {
+) -> Result<Json<Vec<SignalHistory>>, ApiError> {
     let actor = Actor::from_principal(&state.database, &principal)?;
     let trader = state
         .database
         .get_trader(&id)?
         .ok_or_else(ApiError::not_found)?;
     actor.assert_owner(&trader.owner_id)?;
-    Ok(Json(state.database.list_runs(&id)?))
+    Ok(Json(state.database.list_signal_history(&id)?))
 }
 
 async fn get_linkit(

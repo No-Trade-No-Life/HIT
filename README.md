@@ -42,6 +42,12 @@ curl --fail-with-body https://hit.ntnl.io/signal/v1/traders/TRADER_UUID \
 
 不同模板需要不同的 `signal` 字段。创建交易者时，HIT 会预填对应模板的示例 JSON。请求成功只更新目标信号，下一轮已启用交易者执行时会读取新信号。
 
+## 运行与信号记录
+
+- 每个交易者保存成功执行循环计数器（counter，即只累计成功次数的数值），不再为每一轮成功或失败执行写入一条日志。当前失败原因仍保留在交易者状态中。
+- 每次目标信号 PATCH 请求都会保存 payload（请求体中的信号 JSON）历史。连续相同 payload 合并为一条记录，只更新 `updated_at` 并递增出现次数；不同 payload 则创建新的历史记录，包含 `created_at`、`updated_at` 和出现次数。
+- 升级到此版本时，旧 `trader_runs` 表及其全部历史数据会被永久删除。
+
 ## 本地开发
 
 需要 Rust 1.93 与 Node.js 24：
