@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use crate::db::{Database, DatabaseError, Trader};
+use crate::templates as trader_templates;
 
 const RUN_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -171,9 +172,11 @@ pub fn validate_configuration(
         return Err("unknown trader template".into());
     };
     let config = merged_config(credential_id, params, signal)?;
-    serde_json::from_value::<traders::TraderModel>(json!({"model": template_id, "config": config}))
-        .map(|_| ())
-        .map_err(|error| format!("template configuration is invalid: {error}"))
+    serde_json::from_value::<trader_templates::TraderModel>(
+        json!({"model": template_id, "config": config}),
+    )
+    .map(|_| ())
+    .map_err(|error| format!("template configuration is invalid: {error}"))
 }
 
 async fn run_trader(database: &Database, trader: &Trader) {
@@ -202,64 +205,65 @@ async fn execute(database: &Database, trader: &Trader) -> Result<String, String>
         return Err("credential exchange does not match trader template".into());
     }
     let config = merged_config(&trader.credential_id, &trader.params, &trader.signal)?;
-    let model: traders::TraderModel =
+    let model: trader_templates::TraderModel =
         serde_json::from_value(json!({"model": trader.template_id, "config": config}))
             .map_err(|error| format!("template configuration is invalid: {error}"))?;
-    let credential: traders::AccountCredential = serde_json::from_value(credential.json)
-        .map_err(|_| "credential format does not match its exchange".to_owned())?;
+    let credential: trader_templates::AccountCredential =
+        serde_json::from_value(credential.json)
+            .map_err(|_| "credential format does not match its exchange".to_owned())?;
     match model {
-        traders::TraderModel::BinanceUmFuturesCopyTargetPositionV1(config) => {
-            traders::run_binance_um_futures_copy_target_position_once(&config, &credential)
+        trader_templates::TraderModel::BinanceUmFuturesCopyTargetPositionV1(config) => {
+            trader_templates::run_binance_um_futures_copy_target_position_once(&config, &credential)
                 .await
                 .map(|run| format!("{run:?}"))
         }
-        traders::TraderModel::BinanceUmFuturesCopyTargetPositionBboMakerByDirection20260605(
+        trader_templates::TraderModel::BinanceUmFuturesCopyTargetPositionBboMakerByDirection20260605(
             config,
-        ) => traders::run_binance_um_futures_copy_target_position_bbo_maker_by_direction_once(
+        ) => trader_templates::run_binance_um_futures_copy_target_position_bbo_maker_by_direction_once(
             &config,
             &credential,
         )
         .await
         .map(|run| format!("{run:?}")),
-        traders::TraderModel::CtpdCffexIndexFuturesHedgePriority20260719(config) => {
-            traders::run_ctpd_cffex_index_futures_hedge_priority_once(&config, &credential)
+        trader_templates::TraderModel::CtpdCffexIndexFuturesHedgePriority20260719(config) => {
+            trader_templates::run_ctpd_cffex_index_futures_hedge_priority_once(&config, &credential)
                 .await
                 .map(|run| format!("{run:?}"))
         }
-        traders::TraderModel::OkxSwapCopyTargetPositionV1(config) => {
-            traders::run_okx_swap_copy_target_position_once(&config, &credential)
+        trader_templates::TraderModel::OkxSwapCopyTargetPositionV1(config) => {
+            trader_templates::run_okx_swap_copy_target_position_once(&config, &credential)
                 .await
                 .map(|run| format!("{run:?}"))
         }
-        traders::TraderModel::OkxSwapCopyTargetPositionBboMaker20260605(config) => {
-            traders::run_okx_swap_copy_target_position_bbo_maker_once(&config, &credential)
+        trader_templates::TraderModel::OkxSwapCopyTargetPositionBboMaker20260605(config) => {
+            trader_templates::run_okx_swap_copy_target_position_bbo_maker_once(&config, &credential)
                 .await
                 .map(|run| format!("{run:?}"))
         }
-        traders::TraderModel::OkxSwapCopyTargetPositionBboMakerByDirection20260605(config) => {
-            traders::run_okx_swap_copy_target_position_bbo_maker_by_direction_once(
+        trader_templates::TraderModel::OkxSwapCopyTargetPositionBboMakerByDirection20260605(config) => {
+            trader_templates::run_okx_swap_copy_target_position_bbo_maker_by_direction_once(
                 &config,
                 &credential,
             )
             .await
             .map(|run| format!("{run:?}"))
         }
-        traders::TraderModel::OkxSwapCopyTargetPositionBboMakerByDirectionSingleflight20260609(
+        trader_templates::TraderModel::OkxSwapCopyTargetPositionBboMakerByDirectionSingleflight20260609(
             config,
-        ) => traders::run_okx_swap_copy_target_position_bbo_maker_by_direction_singleflight_once(
+        ) => trader_templates::run_okx_swap_copy_target_position_bbo_maker_by_direction_singleflight_once(
             &config,
             &credential,
         )
         .await
         .map(|run| format!("{run:?}")),
-        traders::TraderModel::OkxSwapCopyTargetPositionMultiOrderMaker20260605(config) => {
-            traders::run_okx_swap_copy_target_position_multi_order_maker_once(&config, &credential)
+        trader_templates::TraderModel::OkxSwapCopyTargetPositionMultiOrderMaker20260605(config) => {
+            trader_templates::run_okx_swap_copy_target_position_multi_order_maker_once(&config, &credential)
                 .await
                 .map(|run| format!("{run:?}"))
         }
-        traders::TraderModel::OkxSwapCopyTargetPositionMultiOrderMakerByDirection20260605(
+        trader_templates::TraderModel::OkxSwapCopyTargetPositionMultiOrderMakerByDirection20260605(
             config,
-        ) => traders::run_okx_swap_copy_target_position_multi_order_maker_by_direction_once(
+        ) => trader_templates::run_okx_swap_copy_target_position_multi_order_maker_by_direction_once(
             &config,
             &credential,
         )

@@ -3,6 +3,7 @@
 mod crypto;
 mod db;
 mod engine;
+pub mod templates;
 mod web;
 
 use std::net::SocketAddr;
@@ -13,6 +14,7 @@ use db::Database;
 use engine::TraderRuntime;
 use thiserror::Error;
 
+pub use templates::{AccountCredential, exchanges, runtime};
 pub use web::router;
 
 #[derive(Clone, Debug)]

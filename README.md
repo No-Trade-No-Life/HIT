@@ -1,6 +1,6 @@
 # HIT
 
-HIT（Human-in-the-loop Trader，人工管理的交易执行器）是一个面向多用户的实盘信号算法交易执行器聚合平台。它把现有 `No-Trade-No-Life/traders` 的策略模板固定在一个经过验证的版本中，通过单个 Rust 二进制部署。
+HIT（Human-in-the-loop Trader，人工管理的交易执行器）是一个面向多用户的实盘信号算法交易执行器聚合平台。它把现有 `No-Trade-No-Life/traders` 的策略模板从经过验证的提交直接收进单一 Rust crate，通过单个二进制部署。
 
 > 实盘交易有资金风险。HIT 不会自行生成交易信号；只有交易者被启用，并且外部系统或管理者写入目标信号后，专用策略才会向交易所提交订单。
 
@@ -66,4 +66,4 @@ sudo bash deploy/bootstrap-ubuntu.sh
 
 ## 许可证与来源
 
-HIT 采用 [MIT](LICENSE) 许可证。执行策略通过固定 Git 提交引用 `No-Trade-No-Life/traders`，该项目同样采用 MIT 许可证；HIT 新增的用户、凭证、信号与运行管理层并不改变原策略的交易所专用边界。
+HIT 采用 [MIT](LICENSE) 许可证。执行策略来自 `No-Trade-No-Life/traders` 的固定提交 `d368e39836a5779525b4844233728057904513ae`，该项目同样采用 MIT 许可证；HIT 新增的用户、凭证、信号与运行管理层并不改变原策略的交易所专用边界。
