@@ -21,11 +21,62 @@ pub struct TraderRuntime {
 #[derive(Clone, Debug, Serialize)]
 pub struct Template {
     pub id: &'static str,
+    pub name: &'static str,
+    pub credential_type: &'static str,
     pub exchange: &'static str,
-    pub title: &'static str,
     pub description: &'static str,
+    pub params_schema: Value,
+    pub signal_schema: Value,
     pub params_example: Value,
     pub signal_example: Value,
+}
+
+const BINANCE_UM_FUTURES_CREDENTIAL: &str = "binance_um_futures.api_key_secret_v1";
+const OKX_CREDENTIAL: &str = "okx.api_key_secret_passphrase_v1";
+const CTPD_CREDENTIAL: &str = "ctpd.http_api_key_v1";
+
+fn object_schema(title: &str, description: &str, required: &[&str], properties: Value) -> Value {
+    let mut schema = serde_json::Map::new();
+    schema.insert(
+        "$schema".into(),
+        Value::String("https://json-schema.org/draft/2020-12/schema".into()),
+    );
+    schema.insert("type".into(), Value::String("object".into()));
+    schema.insert("title".into(), Value::String(title.to_owned()));
+    schema.insert("description".into(), Value::String(description.to_owned()));
+    schema.insert("additionalProperties".into(), Value::Bool(false));
+    schema.insert(
+        "required".into(),
+        Value::Array(
+            required
+                .iter()
+                .map(|name| Value::String((*name).to_owned()))
+                .collect(),
+        ),
+    );
+    schema.insert("properties".into(), properties);
+    Value::Object(schema)
+}
+
+fn string_schema(title: &str, description: &str) -> Value {
+    json!({"type":"string","title":title,"description":description})
+}
+
+fn decimal_schema(title: &str, description: &str) -> Value {
+    json!({
+        "type": "string",
+        "title": title,
+        "description": description,
+        "pattern": "^-?\\d+(?:\\.\\d+)?$",
+    })
+}
+
+fn integer_schema(title: &str, description: &str, minimum: i32) -> Value {
+    json!({"type":"integer","title":title,"description":description,"minimum":minimum})
+}
+
+fn enum_schema(title: &str, description: &str, values: &[&str]) -> Value {
+    json!({"type":"string","title":title,"description":description,"enum":values})
 }
 
 impl TraderRuntime {
@@ -83,77 +134,292 @@ pub fn templates() -> Vec<Template> {
     vec![
         Template {
             id: "copy_target_position.binance.um_futures.20260605",
+            name: "Binance UM 目标仓位",
+            credential_type: BINANCE_UM_FUTURES_CREDENTIAL,
             exchange: "binance",
-            title: "Binance UM 目标仓位",
             description: "市价调整到单向或指定持仓方向的目标数量。",
+            params_schema: object_schema(
+                "Binance UM 目标仓位执行参数",
+                "HIT 根据所选交易凭证自动注入账户标识。",
+                &["product_id", "tolerance_qty"],
+                json!({
+                    "product_id": string_schema("合约", "Binance UM Futures 合约标识，例如 BTCUSDT。"),
+                    "tolerance_qty": decimal_schema("仓位容差", "当前仓位与目标仓位的允许差值；差值不超过此值时不下单。"),
+                    "max_order_qty": decimal_schema("单笔最大数量", "可选。限制每次市价调整的最大数量。"),
+                    "account_api": enum_schema("账户 API", "可选。选择标准合约账户或组合保证金账户 API。", &["Fapi", "PortfolioMargin"]),
+                    "position_side": enum_schema("持仓方向", "可选。单向模式使用 BOTH；对冲模式可指定 LONG 或 SHORT。", &["BOTH", "LONG", "SHORT"]),
+                }),
+            ),
+            signal_schema: object_schema(
+                "Binance UM 目标仓位信号",
+                "外部信号提供希望达到的净仓位数量。",
+                &["target_qty"],
+                json!({
+                    "target_qty": decimal_schema("目标仓位数量", "期望的带符号仓位数量；正数为多头，负数为净空头。"),
+                }),
+            ),
             params_example: json!({"product_id":"BTCUSDT","tolerance_qty":"0.001","max_order_qty":"0.01"}),
             signal_example: json!({"target_qty":"0"}),
         },
         Template {
             id: "copy_target_position_bbo_maker_by_direction.binance.um_futures.20260605",
+            name: "Binance UM BBO 分方向挂单",
+            credential_type: BINANCE_UM_FUTURES_CREDENTIAL,
             exchange: "binance",
-            title: "Binance UM BBO 分方向挂单",
             description: "以最优买卖价（BBO）为每个方向维持目标仓位。",
+            params_schema: object_schema(
+                "Binance UM BBO 分方向执行参数",
+                "HIT 根据所选交易凭证自动注入账户标识；该策略要求 Binance 对冲持仓模式。",
+                &["product_id", "tolerance_qty"],
+                json!({
+                    "product_id": string_schema("合约", "Binance UM Futures 合约标识，例如 BTCUSDT。"),
+                    "tolerance_qty": decimal_schema("仓位容差", "每个方向当前仓位与目标仓位的允许差值。"),
+                    "max_order_qty": decimal_schema("单笔最大数量", "可选。限制每笔 BBO 挂单的最大数量。"),
+                    "open_slippage": decimal_schema("开仓滑点", "可选。相对目标均价允许的开仓滑点。"),
+                    "target_long_avg_px": decimal_schema("多头目标均价", "可选。多头开仓时使用的目标平均价格。"),
+                    "target_short_avg_px": decimal_schema("空头目标均价", "可选。空头开仓时使用的目标平均价格。"),
+                    "account_api": enum_schema("账户 API", "可选。选择标准合约账户或组合保证金账户 API。", &["Fapi", "PortfolioMargin"]),
+                }),
+            ),
+            signal_schema: object_schema(
+                "Binance UM 分方向目标信号",
+                "分别给出多头与空头的目标绝对数量。",
+                &["target_long_qty", "target_short_qty"],
+                json!({
+                    "target_long_qty": decimal_schema("多头目标数量", "期望保留的多头仓位绝对数量。"),
+                    "target_short_qty": decimal_schema("空头目标数量", "期望保留的空头仓位绝对数量。"),
+                }),
+            ),
             params_example: json!({"product_id":"BTCUSDT","tolerance_qty":"0.001","max_order_qty":"0.01"}),
             signal_example: json!({"target_long_qty":"0","target_short_qty":"0"}),
         },
         Template {
             id: "copy_target_position.okx.swap.20260605",
+            name: "OKX Swap 目标仓位",
+            credential_type: OKX_CREDENTIAL,
             exchange: "okx",
-            title: "OKX Swap 目标仓位",
             description: "将永续合约净仓位调整到目标数量。",
+            params_schema: object_schema(
+                "OKX Swap 目标仓位执行参数",
+                "HIT 根据所选交易凭证自动注入账户标识。",
+                &["product_id", "tolerance_qty"],
+                json!({
+                    "product_id": string_schema("合约", "OKX 永续合约标识，例如 BTC-USDT-SWAP。"),
+                    "tolerance_qty": decimal_schema("仓位容差", "当前净仓位与目标净仓位的允许差值。"),
+                    "max_order_qty": decimal_schema("单笔最大数量", "可选。限制每次市价调整的最大合约数量。"),
+                    "broker_code": string_schema("经纪商代码", "可选。写入 OKX 订单 tag 的经纪商代码。"),
+                }),
+            ),
+            signal_schema: object_schema(
+                "OKX Swap 目标仓位信号",
+                "外部信号提供希望达到的净仓位数量。",
+                &["target_qty"],
+                json!({
+                    "target_qty": decimal_schema("目标仓位数量", "期望的带符号净仓位数量。"),
+                }),
+            ),
             params_example: json!({"product_id":"BTC-USDT-SWAP","tolerance_qty":"1","max_order_qty":"10"}),
             signal_example: json!({"target_qty":"0"}),
         },
         Template {
             id: "copy_target_position_bbo_maker.okx.swap.20260605",
+            name: "OKX Swap BBO 挂单",
+            credential_type: OKX_CREDENTIAL,
             exchange: "okx",
-            title: "OKX Swap BBO 挂单",
             description: "以最优价挂单方式追踪单一目标仓位。",
+            params_schema: object_schema(
+                "OKX Swap BBO 执行参数",
+                "HIT 根据所选交易凭证自动注入账户标识。",
+                &["product_id", "tolerance_qty"],
+                json!({
+                    "product_id": string_schema("合约", "OKX 永续合约标识，例如 BTC-USDT-SWAP。"),
+                    "tolerance_qty": decimal_schema("仓位容差", "当前净仓位与目标净仓位的允许差值。"),
+                    "max_order_qty": decimal_schema("单笔最大数量", "可选。限制每笔最优价挂单的最大数量。"),
+                    "broker_code": string_schema("经纪商代码", "可选。写入 OKX 订单 tag 的经纪商代码。"),
+                }),
+            ),
+            signal_schema: object_schema(
+                "OKX Swap BBO 目标信号",
+                "外部信号提供希望通过 BBO 挂单达到的净仓位。",
+                &["target_qty"],
+                json!({
+                    "target_qty": decimal_schema("目标仓位数量", "期望的带符号净仓位数量。"),
+                }),
+            ),
             params_example: json!({"product_id":"BTC-USDT-SWAP","tolerance_qty":"1","max_order_qty":"10"}),
             signal_example: json!({"target_qty":"0"}),
         },
         Template {
             id: "copy_target_position_bbo_maker_by_direction.okx.swap.20260605",
+            name: "OKX Swap BBO 分方向挂单",
+            credential_type: OKX_CREDENTIAL,
             exchange: "okx",
-            title: "OKX Swap BBO 分方向挂单",
             description: "在多空分持仓模式下分别追踪多头与空头目标。",
+            params_schema: directional_okx_params_schema(
+                "OKX Swap BBO 分方向执行参数",
+                "HIT 根据所选交易凭证自动注入账户标识；该策略要求 OKX long_short_mode。",
+                false,
+            ),
+            signal_schema: directional_signal_schema(
+                "OKX Swap 分方向目标信号",
+                "分别给出多头与空头的目标绝对数量。",
+            ),
             params_example: json!({"product_id":"BTC-USDT-SWAP","tolerance_qty":"1","max_order_qty":"10"}),
             signal_example: json!({"target_long_qty":"0","target_short_qty":"0"}),
         },
         Template {
             id: "copy_target_position_bbo_maker_by_direction_singleflight.okx.swap.20260609",
+            name: "OKX Swap BBO 单飞行分方向",
+            credential_type: OKX_CREDENTIAL,
             exchange: "okx",
-            title: "OKX Swap BBO 单飞行分方向",
             description: "同账户共享一次持仓查询的分方向 BBO 执行。",
+            params_schema: directional_okx_params_schema(
+                "OKX Swap 单飞行分方向执行参数",
+                "HIT 根据所选交易凭证自动注入账户标识；该策略要求 OKX long_short_mode。",
+                false,
+            ),
+            signal_schema: directional_signal_schema(
+                "OKX Swap 单飞行分方向目标信号",
+                "分别给出多头与空头的目标绝对数量。",
+            ),
             params_example: json!({"product_id":"BTC-USDT-SWAP","tolerance_qty":"1","max_order_qty":"10"}),
             signal_example: json!({"target_long_qty":"0","target_short_qty":"0"}),
         },
         Template {
             id: "copy_target_position_multi_order_maker.okx.swap.20260605",
+            name: "OKX Swap 多单挂单",
+            credential_type: OKX_CREDENTIAL,
             exchange: "okx",
-            title: "OKX Swap 多单挂单",
             description: "将净目标仓位拆分为多笔 maker 挂单。",
+            params_schema: object_schema(
+                "OKX Swap 多单挂单执行参数",
+                "HIT 根据所选交易凭证自动注入账户标识；该策略要求 OKX net_mode。",
+                &["product_id", "tolerance_qty", "order_count"],
+                json!({
+                    "product_id": string_schema("合约", "OKX 永续合约标识，例如 BTC-USDT-SWAP。"),
+                    "tolerance_qty": decimal_schema("仓位容差", "当前净仓位与目标净仓位的允许差值。"),
+                    "order_count": integer_schema("挂单数量", "将目标调整拆分为的 maker 挂单数量。", 1),
+                    "max_order_qty": decimal_schema("单笔最大数量", "可选。限制每笔 maker 挂单的最大数量。"),
+                    "broker_code": string_schema("经纪商代码", "可选。写入 OKX 订单 tag 的经纪商代码。"),
+                }),
+            ),
+            signal_schema: object_schema(
+                "OKX Swap 多单目标信号",
+                "外部信号提供希望拆单达到的净仓位。",
+                &["target_qty"],
+                json!({
+                    "target_qty": decimal_schema("目标仓位数量", "期望的带符号净仓位数量。"),
+                }),
+            ),
             params_example: json!({"product_id":"BTC-USDT-SWAP","tolerance_qty":"1","max_order_qty":"10","order_count":3}),
             signal_example: json!({"target_qty":"0"}),
         },
         Template {
             id: "copy_target_position_multi_order_maker_by_direction.okx.swap.20260605",
+            name: "OKX Swap 多单分方向挂单",
+            credential_type: OKX_CREDENTIAL,
             exchange: "okx",
-            title: "OKX Swap 多单分方向挂单",
             description: "将多空目标分别拆分为多笔 maker 挂单。",
+            params_schema: directional_okx_params_schema(
+                "OKX Swap 多单分方向执行参数",
+                "HIT 根据所选交易凭证自动注入账户标识；该策略要求 OKX long_short_mode。",
+                true,
+            ),
+            signal_schema: directional_signal_schema(
+                "OKX Swap 多单分方向目标信号",
+                "分别给出多头与空头的目标绝对数量。",
+            ),
             params_example: json!({"product_id":"BTC-USDT-SWAP","tolerance_qty":"1","max_order_qty":"10","order_count":3}),
             signal_example: json!({"target_long_qty":"0","target_short_qty":"0"}),
         },
         Template {
             id: "copy_target_position.ctpd.cffex_index_futures.20260719",
+            name: "CTPD 中金所股指期货对冲优先",
+            credential_type: CTPD_CREDENTIAL,
             exchange: "ctpd",
-            title: "CTPD 中金所股指期货对冲优先",
             description: "IF、IH、IC、IM 的昨仓优先平仓、对冲开仓和今仓平仓执行。",
+            params_schema: object_schema(
+                "CTPD 中金所股指期货执行参数",
+                "HIT 根据所选交易凭证自动注入账户标识。",
+                &["instrument_id", "buy_price", "sell_price"],
+                json!({
+                    "instrument_id": string_schema("合约", "中金所 IF、IH、IC 或 IM 股指期货合约，例如 IF2609。"),
+                    "buy_price": decimal_schema("买入限价", "开多或平空时使用的正数限价。"),
+                    "sell_price": decimal_schema("卖出限价", "开空或平多时使用的正数限价。"),
+                }),
+            ),
+            signal_schema: object_schema(
+                "CTPD 中金所股指期货目标信号",
+                "分别给出多头与空头目标手数。",
+                &["target_long_volume", "target_short_volume"],
+                json!({
+                    "target_long_volume": integer_schema("多头目标手数", "期望保留的非负多头手数。", 0),
+                    "target_short_volume": integer_schema("空头目标手数", "期望保留的非负空头手数。", 0),
+                }),
+            ),
             params_example: json!({"instrument_id":"IF2609","buy_price":"4000","sell_price":"3999"}),
             signal_example: json!({"target_long_volume":0,"target_short_volume":0}),
         },
     ]
+}
+
+fn directional_okx_params_schema(title: &str, description: &str, multi_order: bool) -> Value {
+    let mut properties = serde_json::Map::from_iter([
+        (
+            "product_id".into(),
+            string_schema("合约", "OKX 永续合约标识，例如 BTC-USDT-SWAP。"),
+        ),
+        (
+            "tolerance_qty".into(),
+            decimal_schema("仓位容差", "每个方向当前仓位与目标仓位的允许差值。"),
+        ),
+        (
+            "max_order_qty".into(),
+            decimal_schema("单笔最大数量", "可选。限制每笔 maker 挂单的最大数量。"),
+        ),
+        (
+            "open_slippage".into(),
+            decimal_schema("开仓滑点", "可选。相对目标均价允许的开仓滑点。"),
+        ),
+        (
+            "target_long_avg_px".into(),
+            decimal_schema("多头目标均价", "可选。多头开仓时使用的目标平均价格。"),
+        ),
+        (
+            "target_short_avg_px".into(),
+            decimal_schema("空头目标均价", "可选。空头开仓时使用的目标平均价格。"),
+        ),
+        (
+            "broker_code".into(),
+            string_schema("经纪商代码", "可选。写入 OKX 订单 tag 的经纪商代码。"),
+        ),
+    ]);
+    let required = if multi_order {
+        properties.insert(
+            "order_count".into(),
+            integer_schema(
+                "挂单数量",
+                "将每个方向的目标调整拆分为的 maker 挂单数量。",
+                1,
+            ),
+        );
+        vec!["product_id", "tolerance_qty", "order_count"]
+    } else {
+        vec!["product_id", "tolerance_qty"]
+    };
+    object_schema(title, description, &required, Value::Object(properties))
+}
+
+fn directional_signal_schema(title: &str, description: &str) -> Value {
+    object_schema(
+        title,
+        description,
+        &["target_long_qty", "target_short_qty"],
+        json!({
+            "target_long_qty": decimal_schema("多头目标数量", "期望保留的多头仓位绝对数量。"),
+            "target_short_qty": decimal_schema("空头目标数量", "期望保留的空头仓位绝对数量。"),
+        }),
+    )
 }
 
 pub fn template(template_id: &str) -> Option<Template> {
@@ -300,7 +566,7 @@ fn database_error(error: &DatabaseError) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_configuration;
+    use super::{templates, validate_configuration};
     use serde_json::json;
 
     #[test]
@@ -319,5 +585,61 @@ mod tests {
     #[test]
     fn rejects_unknown_template() {
         assert!(validate_configuration("nope", "credential-id", &json!({}), &json!({})).is_err());
+    }
+
+    #[test]
+    fn templates_expose_complete_documented_schemas() {
+        let templates = templates();
+        assert_eq!(templates.len(), 9);
+        for template in templates {
+            assert!(!template.id.is_empty());
+            assert!(!template.name.is_empty());
+            assert!(!template.credential_type.is_empty());
+            assert!(!template.description.is_empty());
+            for schema in [&template.params_schema, &template.signal_schema] {
+                assert_eq!(schema["type"], "object");
+                assert!(
+                    schema["title"]
+                        .as_str()
+                        .is_some_and(|title| !title.is_empty())
+                );
+                assert!(
+                    schema["description"]
+                        .as_str()
+                        .is_some_and(|description| !description.is_empty())
+                );
+                let properties = schema["properties"].as_object().expect("schema properties");
+                assert!(!properties.is_empty());
+                for property in properties.values() {
+                    assert!(
+                        property["title"]
+                            .as_str()
+                            .is_some_and(|title| !title.is_empty())
+                    );
+                    assert!(
+                        property["description"]
+                            .as_str()
+                            .is_some_and(|description| !description.is_empty())
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn template_examples_match_their_execution_configuration() {
+        for template in templates() {
+            assert!(
+                validate_configuration(
+                    template.id,
+                    "credential-id",
+                    &template.params_example,
+                    &template.signal_example,
+                )
+                .is_ok(),
+                "{} example configuration is invalid",
+                template.id
+            );
+        }
     }
 }

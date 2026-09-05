@@ -646,3 +646,49 @@ impl IntoResponse for ApiError {
         (status, Json(json!({"error":message}))).into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn template_endpoint_returns_complete_schema_metadata() {
+        let Json(templates) = list_templates().await;
+
+        assert_eq!(templates.len(), 9);
+        for template in templates {
+            let document = serde_json::to_value(template).expect("template serializes");
+            for field in [
+                "id",
+                "name",
+                "credential_type",
+                "description",
+                "params_schema",
+                "signal_schema",
+            ] {
+                assert!(
+                    document.get(field).is_some_and(Value::is_string)
+                        || document[field].is_object()
+                );
+            }
+            for schema_name in ["params_schema", "signal_schema"] {
+                let properties = document[schema_name]["properties"]
+                    .as_object()
+                    .expect("schema properties");
+                assert!(!properties.is_empty());
+                for property in properties.values() {
+                    assert!(
+                        property["title"]
+                            .as_str()
+                            .is_some_and(|title| !title.is_empty())
+                    );
+                    assert!(
+                        property["description"]
+                            .as_str()
+                            .is_some_and(|description| !description.is_empty())
+                    );
+                }
+            }
+        }
+    }
+}
