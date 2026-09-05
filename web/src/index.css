@@ -1,0 +1,79 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+
+@source "../node_modules/auth-mini-react-components/dist";
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.2 0.018 110);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2 0.018 110);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2 0.018 110);
+  --primary: oklch(0.39 0.1 110);
+  --primary-foreground: oklch(0.99 0.002 110);
+  --secondary: oklch(0.964 0.01 110);
+  --secondary-foreground: oklch(0.25 0.025 110);
+  --muted: oklch(0.97 0.008 110);
+  --muted-foreground: oklch(0.46 0.024 110);
+  --accent: oklch(0.94 0.025 110);
+  --accent-foreground: oklch(0.25 0.025 110);
+  --destructive: oklch(0.52 0.19 28);
+  --border: oklch(0.9 0.012 110);
+  --input: oklch(0.88 0.014 110);
+  --ring: oklch(0.39 0.1 110);
+  --radius: 0.5rem;
+  --sidebar: oklch(0.982 0.006 110);
+  --sidebar-foreground: oklch(0.2 0.018 110);
+  --sidebar-primary: oklch(0.39 0.1 110);
+  --sidebar-primary-foreground: oklch(0.99 0.002 110);
+  --sidebar-accent: oklch(0.94 0.025 110);
+  --sidebar-accent-foreground: oklch(0.25 0.025 110);
+  --sidebar-border: oklch(0.9 0.012 110);
+  --sidebar-ring: oklch(0.39 0.1 110);
+}
+
+@theme inline {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html { @apply font-sans; }
+  body { @apply m-0 min-w-80 bg-background text-foreground; }
+  button, input, textarea { font: inherit; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+}
