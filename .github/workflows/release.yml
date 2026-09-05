@@ -58,4 +58,4 @@ jobs:
       - name: Deploy through AWS Systems Manager
         env:
           EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
-        run: .github/scripts/send-deploy.sh "$EC2_INSTANCE_ID" "${{ needs.build.outputs.tag }}"
+        run: bash .github/scripts/send-deploy.sh "$EC2_INSTANCE_ID" "${{ needs.build.outputs.tag }}"
