@@ -180,14 +180,13 @@ pub fn validate_configuration(
 }
 
 async fn run_trader(database: &Database, trader: &Trader) {
-    let started_at = chrono::Utc::now().timestamp();
     let result = execute(database, trader).await;
     match result {
-        Ok(summary) => {
-            let _ = database.record_run(&trader.id, "succeeded", Some(&summary), started_at);
+        Ok(_) => {
+            let _ = database.record_successful_run(&trader.id);
         }
         Err(error) => {
-            let _ = database.record_run(&trader.id, "failed", Some(&error), started_at);
+            let _ = database.record_failed_run(&trader.id, &error);
             notify_linkit(database, trader, &error).await;
         }
     }

@@ -58,18 +58,19 @@ pub struct Trader {
     pub status: String,
     pub last_run_at: Option<i64>,
     pub last_error: Option<String>,
+    pub successful_runs: i64,
     pub created_at: i64,
     pub updated_at: i64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Run {
+pub struct SignalHistory {
     pub id: String,
     pub trader_id: String,
-    pub status: String,
-    pub summary: Option<String>,
-    pub started_at: i64,
-    pub finished_at: i64,
+    pub signal: Value,
+    pub occurrences: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -135,19 +136,20 @@ impl Database {
                 status TEXT NOT NULL,
                 last_run_at INTEGER,
                 last_error TEXT,
+                successful_runs INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS traders_owner_id_idx ON traders(owner_id);
-            CREATE TABLE IF NOT EXISTS trader_runs (
+            CREATE TABLE IF NOT EXISTS signal_history (
                 id TEXT PRIMARY KEY NOT NULL,
                 trader_id TEXT NOT NULL REFERENCES traders(id) ON DELETE CASCADE,
-                status TEXT NOT NULL,
-                summary TEXT,
-                started_at INTEGER NOT NULL,
-                finished_at INTEGER NOT NULL
+                signal_json TEXT NOT NULL,
+                occurrences INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS trader_runs_trader_id_idx ON trader_runs(trader_id, started_at DESC);
+            CREATE INDEX IF NOT EXISTS signal_history_trader_id_idx ON signal_history(trader_id, updated_at DESC);
             CREATE TABLE IF NOT EXISTS linkit_settings (
                 owner_id TEXT PRIMARY KEY NOT NULL,
                 recipient_username TEXT NOT NULL,
@@ -156,6 +158,13 @@ impl Database {
             );
             ",
         )?;
+        if !has_successful_runs_column(&connection)? {
+            connection.execute(
+                "ALTER TABLE traders ADD COLUMN successful_runs INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        connection.execute_batch("DROP TABLE IF EXISTS trader_runs;")?;
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
             cipher,
@@ -283,9 +292,9 @@ impl Database {
     pub fn list_traders(&self, owner_id: Option<&str>) -> Result<Vec<Trader>, DatabaseError> {
         let connection = self.connection()?;
         let mut statement = if owner_id.is_some() {
-            connection.prepare("SELECT id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_prefix, enabled, status, last_run_at, last_error, created_at, updated_at FROM traders WHERE owner_id = ?1 ORDER BY updated_at DESC")?
+            connection.prepare("SELECT id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_prefix, enabled, status, last_run_at, last_error, successful_runs, created_at, updated_at FROM traders WHERE owner_id = ?1 ORDER BY updated_at DESC")?
         } else {
-            connection.prepare("SELECT id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_prefix, enabled, status, last_run_at, last_error, created_at, updated_at FROM traders ORDER BY updated_at DESC")?
+            connection.prepare("SELECT id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_prefix, enabled, status, last_run_at, last_error, successful_runs, created_at, updated_at FROM traders ORDER BY updated_at DESC")?
         };
         let rows = match owner_id {
             Some(owner_id) => statement.query_map([owner_id], trader_from_row)?,
@@ -297,7 +306,7 @@ impl Database {
 
     pub fn enabled_traders(&self) -> Result<Vec<Trader>, DatabaseError> {
         let connection = self.connection()?;
-        let mut statement = connection.prepare("SELECT id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_prefix, enabled, status, last_run_at, last_error, created_at, updated_at FROM traders WHERE enabled = 1 ORDER BY updated_at DESC")?;
+        let mut statement = connection.prepare("SELECT id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_prefix, enabled, status, last_run_at, last_error, successful_runs, created_at, updated_at FROM traders WHERE enabled = 1 ORDER BY updated_at DESC")?;
         statement
             .query_map([], trader_from_row)?
             .collect::<Result<Vec<_>, _>>()
@@ -306,7 +315,7 @@ impl Database {
 
     pub fn get_trader(&self, id: &str) -> Result<Option<Trader>, DatabaseError> {
         self.connection()?.query_row(
-            "SELECT id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_prefix, enabled, status, last_run_at, last_error, created_at, updated_at FROM traders WHERE id = ?1", [id], trader_from_row,
+            "SELECT id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_prefix, enabled, status, last_run_at, last_error, successful_runs, created_at, updated_at FROM traders WHERE id = ?1", [id], trader_from_row,
         ).optional().map_err(DatabaseError::Sqlite)
     }
 
@@ -329,12 +338,13 @@ impl Database {
             },
             last_run_at: None,
             last_error: None,
+            successful_runs: 0,
             created_at: now(),
             updated_at: now(),
         };
         self.connection()?.execute(
-            "INSERT INTO traders(id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_hash, signal_token_prefix, enabled, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            params![trader.id, trader.owner_id, trader.name, trader.template_id, trader.credential_id, serde_json::to_string(&trader.params)?, serde_json::to_string(&trader.signal)?, hash_token(&token), trader.signal_token_prefix, i64::from(trader.enabled), trader.status, trader.created_at, trader.updated_at],
+            "INSERT INTO traders(id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_hash, signal_token_prefix, enabled, status, successful_runs, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![trader.id, trader.owner_id, trader.name, trader.template_id, trader.credential_id, serde_json::to_string(&trader.params)?, serde_json::to_string(&trader.signal)?, hash_token(&token), trader.signal_token_prefix, i64::from(trader.enabled), trader.status, trader.successful_runs, trader.created_at, trader.updated_at],
         )?;
         Ok((trader, token))
     }
@@ -379,14 +389,21 @@ impl Database {
         id: &str,
         signal: &Value,
     ) -> Result<Option<Trader>, DatabaseError> {
-        let changed = self.connection()?.execute(
-            "UPDATE traders SET signal_json = ?2, updated_at = ?3 WHERE id = ?1",
-            params![id, serde_json::to_string(signal)?, now()],
-        )?;
-        if changed == 0 {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let trader = transaction
+            .query_row(
+                "SELECT id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_prefix, enabled, status, last_run_at, last_error, successful_runs, created_at, updated_at FROM traders WHERE id = ?1",
+                [id],
+                trader_from_row,
+            )
+            .optional()?;
+        let Some(trader) = trader else {
             return Ok(None);
-        }
-        self.get_trader(id)
+        };
+        let trader = record_signal_patch(&transaction, trader, signal)?;
+        transaction.commit()?;
+        Ok(Some(trader))
     }
 
     pub fn delete_trader(&self, id: &str) -> Result<bool, DatabaseError> {
@@ -409,46 +426,49 @@ impl Database {
         token: &str,
         signal: &Value,
     ) -> Result<bool, DatabaseError> {
-        let changed = self.connection()?.execute(
-            "UPDATE traders SET signal_json = ?3, updated_at = ?4 WHERE id = ?1 AND signal_token_hash = ?2",
-            params![id, hash_token(token), serde_json::to_string(signal)?, now()],
-        )?;
-        Ok(changed == 1)
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let trader = transaction
+            .query_row(
+                "SELECT id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_prefix, enabled, status, last_run_at, last_error, successful_runs, created_at, updated_at FROM traders WHERE id = ?1 AND signal_token_hash = ?2",
+                params![id, hash_token(token)],
+                trader_from_row,
+            )
+            .optional()?;
+        let Some(trader) = trader else {
+            return Ok(false);
+        };
+        record_signal_patch(&transaction, trader, signal)?;
+        transaction.commit()?;
+        Ok(true)
     }
 
-    pub fn record_run(
-        &self,
-        trader_id: &str,
-        status: &str,
-        summary: Option<&str>,
-        started_at: i64,
-    ) -> Result<(), DatabaseError> {
-        let finished_at = now();
+    pub fn record_successful_run(&self, trader_id: &str) -> Result<(), DatabaseError> {
+        let completed_at = now();
         self.connection()?.execute(
-            "INSERT INTO trader_runs(id, trader_id, status, summary, started_at, finished_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![Uuid::new_v4().to_string(), trader_id, status, summary, started_at, finished_at],
-        )?;
-        self.connection()?.execute(
-            "UPDATE traders SET status = ?2, last_run_at = ?3, last_error = ?4, updated_at = ?3 WHERE id = ?1",
-            params![trader_id, if status == "succeeded" { "running" } else { "failed" }, finished_at, if status == "succeeded" { None } else { summary }],
+            "UPDATE traders SET successful_runs = successful_runs + 1, status = 'running', last_run_at = ?2, last_error = NULL, updated_at = ?2 WHERE id = ?1",
+            params![trader_id, completed_at],
         )?;
         Ok(())
     }
 
-    pub fn list_runs(&self, trader_id: &str) -> Result<Vec<Run>, DatabaseError> {
+    pub fn record_failed_run(&self, trader_id: &str, error: &str) -> Result<(), DatabaseError> {
+        let completed_at = now();
+        self.connection()?.execute(
+            "UPDATE traders SET status = 'failed', last_run_at = ?2, last_error = ?3, updated_at = ?2 WHERE id = ?1",
+            params![trader_id, completed_at, error],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_signal_history(
+        &self,
+        trader_id: &str,
+    ) -> Result<Vec<SignalHistory>, DatabaseError> {
         let connection = self.connection()?;
-        let mut statement = connection.prepare("SELECT id, trader_id, status, summary, started_at, finished_at FROM trader_runs WHERE trader_id = ?1 ORDER BY started_at DESC LIMIT 100")?;
+        let mut statement = connection.prepare("SELECT id, trader_id, signal_json, occurrences, created_at, updated_at FROM signal_history WHERE trader_id = ?1 ORDER BY updated_at DESC, rowid DESC LIMIT 100")?;
         statement
-            .query_map([trader_id], |row| {
-                Ok(Run {
-                    id: row.get(0)?,
-                    trader_id: row.get(1)?,
-                    status: row.get(2)?,
-                    summary: row.get(3)?,
-                    started_at: row.get(4)?,
-                    finished_at: row.get(5)?,
-                })
-            })?
+            .query_map([trader_id], signal_history_from_row)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(DatabaseError::Sqlite)
     }
@@ -525,6 +545,21 @@ fn credential_from_row(row: &Row<'_>) -> rusqlite::Result<Credential> {
         updated_at: row.get(5)?,
     })
 }
+
+fn signal_history_from_row(row: &Row<'_>) -> rusqlite::Result<SignalHistory> {
+    let signal = serde_json::from_str(&row.get::<_, String>(2)?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    Ok(SignalHistory {
+        id: row.get(0)?,
+        trader_id: row.get(1)?,
+        signal,
+        occurrences: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
+    })
+}
+
 fn trader_from_row(row: &Row<'_>) -> rusqlite::Result<Trader> {
     let params = serde_json::from_str(&row.get::<_, String>(5)?).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(error))
@@ -545,10 +580,61 @@ fn trader_from_row(row: &Row<'_>) -> rusqlite::Result<Trader> {
         status: row.get(9)?,
         last_run_at: row.get(10)?,
         last_error: row.get(11)?,
-        created_at: row.get(12)?,
-        updated_at: row.get(13)?,
+        successful_runs: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
     })
 }
+
+fn record_signal_patch(
+    transaction: &rusqlite::Transaction<'_>,
+    trader: Trader,
+    signal: &Value,
+) -> Result<Trader, DatabaseError> {
+    let recorded_at = now();
+    let latest = transaction
+        .query_row(
+            "SELECT id, trader_id, signal_json, occurrences, created_at, updated_at FROM signal_history WHERE trader_id = ?1 ORDER BY updated_at DESC, rowid DESC LIMIT 1",
+            [&trader.id],
+            signal_history_from_row,
+        )
+        .optional()?;
+    if let Some(latest) = latest.filter(|entry| trader.signal == *signal && entry.signal == *signal)
+    {
+        transaction.execute(
+            "UPDATE signal_history SET occurrences = occurrences + 1, updated_at = ?2 WHERE id = ?1",
+            params![latest.id, recorded_at],
+        )?;
+        return Ok(trader);
+    }
+    transaction.execute(
+        "INSERT INTO signal_history(id, trader_id, signal_json, occurrences, created_at, updated_at) VALUES (?1, ?2, ?3, 1, ?4, ?4)",
+        params![Uuid::new_v4().to_string(), trader.id, serde_json::to_string(signal)?, recorded_at],
+    )?;
+    if trader.signal == *signal {
+        return Ok(trader);
+    }
+    transaction.execute(
+        "UPDATE traders SET signal_json = ?2, updated_at = ?3 WHERE id = ?1",
+        params![trader.id, serde_json::to_string(signal)?, recorded_at],
+    )?;
+    transaction
+        .query_row(
+            "SELECT id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_prefix, enabled, status, last_run_at, last_error, successful_runs, created_at, updated_at FROM traders WHERE id = ?1",
+            [&trader.id],
+            trader_from_row,
+        )
+        .map_err(DatabaseError::Sqlite)
+}
+
+fn has_successful_runs_column(connection: &Connection) -> rusqlite::Result<bool> {
+    connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('traders') WHERE name = 'successful_runs')",
+        [],
+        |row| row.get::<_, i64>(0).map(|exists| exists != 0),
+    )
+}
+
 fn now() -> i64 {
     Utc::now().timestamp()
 }
@@ -561,6 +647,7 @@ fn hash_token(token: &str) -> String {
 mod tests {
     use std::error::Error;
 
+    use rusqlite::{Connection, OptionalExtension};
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -627,6 +714,136 @@ mod tests {
         assert_eq!(updated.credential_id, credential.id);
         assert!(updated.enabled);
         assert_eq!(updated.status, "starting");
+        Ok(())
+    }
+
+    #[test]
+    fn signal_patch_history_coalesces_identical_payloads() -> Result<(), Box<dyn Error>> {
+        let state_directory = tempdir()?;
+        let database = Database::open(state_directory.path())?;
+        let credential = database.create_credential("owner", "binance", "primary", &json!({}))?;
+        let initial_signal = json!({"target_qty":"1"});
+        let (trader, token) = database.create_trader(&TraderDraft {
+            owner_id: "owner".into(),
+            name: "alpha".into(),
+            template_id: "template".into(),
+            credential_id: credential.id,
+            params: json!({"product_id":"BTCUSDT"}),
+            signal: initial_signal.clone(),
+            enabled: false,
+        })?;
+
+        assert!(database.update_signal(&trader.id, &token, &initial_signal)?);
+        database
+            .set_trader_signal(&trader.id, &initial_signal)?
+            .expect("created trader exists");
+        let history = database.list_signal_history(&trader.id)?;
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].signal, initial_signal);
+        assert_eq!(history[0].occurrences, 2);
+        assert!(history[0].updated_at >= history[0].created_at);
+
+        let changed_signal = json!({"target_qty":"2"});
+        assert!(database.update_signal(&trader.id, &token, &changed_signal)?);
+        let history = database.list_signal_history(&trader.id)?;
+        assert_eq!(history.len(), 2);
+        assert!(
+            history
+                .iter()
+                .any(|entry| entry.signal == changed_signal && entry.occurrences == 1)
+        );
+        assert_eq!(
+            database
+                .get_trader(&trader.id)?
+                .expect("created trader exists")
+                .signal,
+            changed_signal
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn successful_runs_are_counted_without_execution_history() -> Result<(), Box<dyn Error>> {
+        let state_directory = tempdir()?;
+        let database = Database::open(state_directory.path())?;
+        let credential = database.create_credential("owner", "binance", "primary", &json!({}))?;
+        let (trader, _) = database.create_trader(&TraderDraft {
+            owner_id: "owner".into(),
+            name: "alpha".into(),
+            template_id: "template".into(),
+            credential_id: credential.id,
+            params: json!({"product_id":"BTCUSDT"}),
+            signal: json!({"target_qty":"1"}),
+            enabled: true,
+        })?;
+
+        database.record_successful_run(&trader.id)?;
+        database.record_successful_run(&trader.id)?;
+        database.record_failed_run(&trader.id, "exchange rejected order")?;
+        let trader = database
+            .get_trader(&trader.id)?
+            .expect("created trader exists");
+        assert_eq!(trader.successful_runs, 2);
+        assert_eq!(trader.status, "failed");
+        assert_eq!(
+            trader.last_error.as_deref(),
+            Some("exchange rejected order")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn opening_an_existing_database_drops_legacy_run_history() -> Result<(), Box<dyn Error>> {
+        let state_directory = tempdir()?;
+        let path = state_directory.path().join("default.sqlite3");
+        let connection = Connection::open(path)?;
+        connection.execute_batch(
+            "
+            CREATE TABLE traders (
+                id TEXT PRIMARY KEY NOT NULL,
+                owner_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                template_id TEXT NOT NULL,
+                credential_id TEXT NOT NULL,
+                params_json TEXT NOT NULL,
+                signal_json TEXT NOT NULL,
+                signal_token_hash TEXT NOT NULL,
+                signal_token_prefix TEXT NOT NULL,
+                enabled INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                last_run_at INTEGER,
+                last_error TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE trader_runs (
+                id TEXT PRIMARY KEY NOT NULL,
+                trader_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                summary TEXT,
+                started_at INTEGER NOT NULL,
+                finished_at INTEGER NOT NULL
+            );
+            ",
+        )?;
+        drop(connection);
+
+        let database = Database::open(state_directory.path())?;
+        let connection = database.connection()?;
+        let successful_runs_column = connection.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('traders') WHERE name = 'successful_runs'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let legacy_history_table = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'trader_runs'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        assert_eq!(successful_runs_column, 1);
+        assert_eq!(legacy_history_table, None);
         Ok(())
     }
 }

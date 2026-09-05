@@ -1,13 +1,13 @@
 import { useState } from "react"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { ActivityIcon, CircleAlertIcon, KeyRoundIcon } from "lucide-react"
+import { CircleAlertIcon, HistoryIcon, KeyRoundIcon } from "lucide-react"
 import { useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { request } from "../lib/api"
 import { formatTime, showError } from "../lib/format"
-import { localeText, type Copy } from "../lib/i18n"
-import type { Run, Trader } from "../lib/types"
+import type { Copy } from "../lib/i18n"
+import type { SignalHistory, Trader } from "../lib/types"
 import { EmptyState, PageError, StatusBadge, TraderEnabledSwitch } from "../components/trader-ui"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -22,14 +22,14 @@ export function TraderDetailPage({ token, t, onChanged }: { token: string; t: Co
   const navigate = useNavigate()
   const { traderId } = useParams()
   const trader = useQuery({ queryKey: ["trader", traderId, token], queryFn: () => request<Trader>(`/api/v1/traders/${traderId}`, token), enabled: Boolean(traderId) })
-  const runs = useQuery({ queryKey: ["runs", traderId, token], queryFn: () => request<Run[]>(`/api/v1/traders/${traderId}/runs`, token), enabled: Boolean(traderId), refetchInterval: 10_000 })
+  const signalHistory = useQuery({ queryKey: ["signal-history", traderId, token], queryFn: () => request<SignalHistory[]>(`/api/v1/traders/${traderId}/signal-history`, token), enabled: Boolean(traderId), refetchInterval: 10_000 })
   if (!traderId) return null
   if (trader.isPending) return <Skeleton className="h-72" />
   if (trader.error) return <PageError error={trader.error} />
   if (!trader.data) return null
 
   const value = trader.data
-  return <div className="flex flex-col gap-6"><div className="flex flex-wrap items-end justify-between gap-3"><div><Button variant="ghost" size="sm" onClick={() => navigate("/traders")}>← {t.traders}</Button><h1 className="mt-2 mb-0 text-2xl font-semibold tracking-tight">{value.name}</h1><p className="mt-1 font-mono text-xs text-muted-foreground">{value.id}</p></div><div className="flex items-center gap-3"><StatusBadge trader={value} t={t} /><TraderEnabledSwitch trader={value} token={token} t={t} onChanged={onChanged} /></div></div>{value.last_error && <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{t.failed}</AlertTitle><AlertDescription>{value.last_error}</AlertDescription></Alert>}<div className="grid gap-4 lg:grid-cols-2"><Card><CardHeader><CardTitle>{t.params}</CardTitle><CardDescription>{t.credential}: {value.credential_id}</CardDescription></CardHeader><CardContent><JsonBlock value={value.params} /></CardContent></Card><SignalCard key={JSON.stringify(value.signal)} trader={value} token={token} t={t} onSaved={() => { void trader.refetch(); onChanged() }} /></div><Card><CardHeader><CardTitle>{t.runs}</CardTitle><CardDescription>{t.detail}</CardDescription></CardHeader><CardContent>{runs.data?.length ? <Table><TableHeader><TableRow><TableHead>{t.status}</TableHead><TableHead>{t.updated}</TableHead><TableHead>{localeText(t, "Summary", "摘要")}</TableHead></TableRow></TableHeader><TableBody>{runs.data.map(run => <TableRow key={run.id}><TableCell><Badge variant={run.status === "failed" ? "destructive" : "default"}>{run.status}</Badge></TableCell><TableCell>{formatTime(run.started_at)}</TableCell><TableCell className="max-w-xl truncate font-mono text-xs">{run.summary}</TableCell></TableRow>)}</TableBody></Table> : <EmptyState title={t.runs} description={localeText(t, "No execution has been recorded yet.", "尚未记录执行。")} icon={ActivityIcon} />}</CardContent></Card></div>
+  return <div className="flex flex-col gap-6"><div className="flex flex-wrap items-end justify-between gap-3"><div><Button variant="ghost" size="sm" onClick={() => navigate("/traders")}>← {t.traders}</Button><h1 className="mt-2 mb-0 text-2xl font-semibold tracking-tight">{value.name}</h1><p className="mt-1 font-mono text-xs text-muted-foreground">{value.id}</p></div><div className="flex items-center gap-3"><StatusBadge trader={value} t={t} /><TraderEnabledSwitch trader={value} token={token} t={t} onChanged={onChanged} /></div></div>{value.last_error && <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{t.failed}</AlertTitle><AlertDescription>{value.last_error}</AlertDescription></Alert>}<div className="grid gap-4 lg:grid-cols-2"><Card><CardHeader><CardTitle>{t.params}</CardTitle><CardDescription>{t.credential}: {value.credential_id}</CardDescription></CardHeader><CardContent className="flex flex-col gap-4"><div className="flex items-center justify-between border-b pb-3 text-sm"><span className="text-muted-foreground">{t.successfulRuns}</span><span className="font-mono tabular-nums">{value.successful_runs}</span></div><JsonBlock value={value.params} /></CardContent></Card><SignalCard key={JSON.stringify(value.signal)} trader={value} token={token} t={t} onSaved={() => { void trader.refetch(); void signalHistory.refetch(); onChanged() }} /></div><Card><CardHeader><CardTitle>{t.signalHistory}</CardTitle><CardDescription>{t.signalHistoryDescription}</CardDescription></CardHeader><CardContent>{signalHistory.data?.length ? <Table><TableHeader><TableRow><TableHead>{t.signalPayload}</TableHead><TableHead>{t.occurrences}</TableHead><TableHead>{t.firstSeen}</TableHead><TableHead>{t.updated}</TableHead></TableRow></TableHeader><TableBody>{signalHistory.data.map(entry => <TableRow key={entry.id}><TableCell className="min-w-64 align-top"><JsonBlock value={entry.signal} /></TableCell><TableCell><Badge variant="secondary">{entry.occurrences}</Badge></TableCell><TableCell className="whitespace-nowrap text-muted-foreground">{formatTime(entry.created_at)}</TableCell><TableCell className="whitespace-nowrap text-muted-foreground">{formatTime(entry.updated_at)}</TableCell></TableRow>)}</TableBody></Table> : <EmptyState title={t.signalHistory} description={t.signalHistoryDescription} icon={HistoryIcon} />}</CardContent></Card></div>
 }
 
 function SignalCard({ trader, token, t, onSaved }: { trader: Trader; token: string; t: Copy; onSaved: () => void }) {
