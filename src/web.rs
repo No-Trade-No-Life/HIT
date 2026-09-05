@@ -50,6 +50,7 @@ pub fn router(database: Database, runtime: TraderRuntime, auth: AuthMiniLayer) -
             get(get_trader).put(update_trader).delete(delete_trader),
         )
         .route("/traders/{id}/enabled", patch(set_trader_enabled))
+        .route("/traders/{id}/signal", patch(set_trader_signal))
         .route("/traders/{id}/signal-token", post(rotate_signal_token))
         .route("/traders/{id}/runs", get(list_runs))
         .route("/linkit", get(get_linkit).put(put_linkit))
@@ -310,6 +311,33 @@ async fn set_trader_enabled(
     Ok(Json(trader))
 }
 
+async fn set_trader_signal(
+    State(state): State<AppState>,
+    Extension(principal): Extension<AuthMiniPrincipal>,
+    Path(id): Path<String>,
+    Json(input): Json<SignalInput>,
+) -> Result<Json<Trader>, ApiError> {
+    let actor = Actor::from_principal(&state.database, &principal)?;
+    let trader = state
+        .database
+        .get_trader(&id)?
+        .ok_or_else(ApiError::not_found)?;
+    actor.assert_owner(&trader.owner_id)?;
+    validate_configuration(
+        &trader.template_id,
+        &trader.credential_id,
+        &trader.params,
+        &input.signal,
+    )
+    .map_err(ApiError::bad_request)?;
+    let trader = state
+        .database
+        .set_trader_signal(&id, &input.signal)?
+        .ok_or_else(ApiError::not_found)?;
+    state.runtime.reconcile().await;
+    Ok(Json(trader))
+}
+
 async fn delete_trader(
     State(state): State<AppState>,
     Extension(principal): Extension<AuthMiniPrincipal>,
@@ -388,7 +416,7 @@ async fn external_signal(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
-    Json(input): Json<ExternalSignal>,
+    Json(input): Json<SignalInput>,
 ) -> Result<Json<Value>, ApiError> {
     let token =
         bearer_token(&headers).ok_or_else(|| ApiError::unauthorized("missing signal API key"))?;
@@ -455,7 +483,7 @@ struct EnabledInput {
     enabled: bool,
 }
 #[derive(Debug, Deserialize)]
-struct ExternalSignal {
+struct SignalInput {
     signal: Value,
 }
 #[derive(Debug, Deserialize)]
