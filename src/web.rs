@@ -49,6 +49,7 @@ pub fn router(database: Database, runtime: TraderRuntime, auth: AuthMiniLayer) -
             "/traders/{id}",
             get(get_trader).put(update_trader).delete(delete_trader),
         )
+        .route("/traders/{id}/enabled", patch(set_trader_enabled))
         .route("/traders/{id}/signal-token", post(rotate_signal_token))
         .route("/traders/{id}/runs", get(list_runs))
         .route("/linkit", get(get_linkit).put(put_linkit))
@@ -289,6 +290,26 @@ async fn update_trader(
     Ok(Json(trader))
 }
 
+async fn set_trader_enabled(
+    State(state): State<AppState>,
+    Extension(principal): Extension<AuthMiniPrincipal>,
+    Path(id): Path<String>,
+    Json(input): Json<EnabledInput>,
+) -> Result<Json<Trader>, ApiError> {
+    let actor = Actor::from_principal(&state.database, &principal)?;
+    let trader = state
+        .database
+        .get_trader(&id)?
+        .ok_or_else(ApiError::not_found)?;
+    actor.assert_owner(&trader.owner_id)?;
+    let trader = state
+        .database
+        .set_trader_enabled(&id, input.enabled)?
+        .ok_or_else(ApiError::not_found)?;
+    state.runtime.reconcile().await;
+    Ok(Json(trader))
+}
+
 async fn delete_trader(
     State(state): State<AppState>,
     Extension(principal): Extension<AuthMiniPrincipal>,
@@ -427,6 +448,10 @@ struct TraderUpdateInput {
     credential_id: String,
     params: Value,
     signal: Value,
+    enabled: bool,
+}
+#[derive(Debug, Deserialize)]
+struct EnabledInput {
     enabled: bool,
 }
 #[derive(Debug, Deserialize)]

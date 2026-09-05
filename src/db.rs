@@ -354,6 +354,26 @@ impl Database {
         self.get_trader(id)
     }
 
+    pub fn set_trader_enabled(
+        &self,
+        id: &str,
+        enabled: bool,
+    ) -> Result<Option<Trader>, DatabaseError> {
+        let changed = self.connection()?.execute(
+            "UPDATE traders SET enabled = ?2, status = ?3, updated_at = ?4 WHERE id = ?1",
+            params![
+                id,
+                i64::from(enabled),
+                if enabled { "starting" } else { "stopped" },
+                now()
+            ],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        self.get_trader(id)
+    }
+
     pub fn delete_trader(&self, id: &str) -> Result<bool, DatabaseError> {
         Ok(self
             .connection()?
@@ -520,4 +540,49 @@ fn now() -> i64 {
 fn hash_token(token: &str) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(token.as_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use serde_json::json;
+    use tempfile::tempdir;
+
+    use super::{Database, TraderDraft};
+
+    #[test]
+    fn set_trader_enabled_preserves_trader_configuration() -> Result<(), Box<dyn Error>> {
+        let state_directory = tempdir()?;
+        let database = Database::open(state_directory.path())?;
+        let credential = database.create_credential("owner", "binance", "primary", &json!({}))?;
+        let params = json!({"product_id":"BTCUSDT"});
+        let signal = json!({"target_qty":"1"});
+        let (trader, _) = database.create_trader(&TraderDraft {
+            owner_id: "owner".into(),
+            name: "alpha".into(),
+            template_id: "template".into(),
+            credential_id: credential.id,
+            params: params.clone(),
+            signal: signal.clone(),
+            enabled: false,
+        })?;
+
+        let trader = database
+            .set_trader_enabled(&trader.id, true)?
+            .expect("created trader exists");
+        assert!(trader.enabled);
+        assert_eq!(trader.status, "starting");
+        assert_eq!(trader.params, params);
+        assert_eq!(trader.signal, signal);
+
+        let trader = database
+            .set_trader_enabled(&trader.id, false)?
+            .expect("created trader exists");
+        assert!(!trader.enabled);
+        assert_eq!(trader.status, "stopped");
+        assert_eq!(trader.params, params);
+        assert_eq!(trader.signal, signal);
+        Ok(())
+    }
 }
