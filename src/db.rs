@@ -364,6 +364,21 @@ impl Database {
         self.get_trader(id)
     }
 
+    pub fn set_trader_params(
+        &self,
+        id: &str,
+        params: &Value,
+    ) -> Result<Option<Trader>, DatabaseError> {
+        let changed = self.connection()?.execute(
+            "UPDATE traders SET params_json = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, serde_json::to_string(params)?, now()],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        self.get_trader(id)
+    }
+
     pub fn set_trader_enabled(
         &self,
         id: &str,
@@ -711,6 +726,35 @@ mod tests {
 
         assert_eq!(updated.signal, signal);
         assert_eq!(updated.params, params);
+        assert_eq!(updated.credential_id, credential.id);
+        assert!(updated.enabled);
+        assert_eq!(updated.status, "starting");
+        Ok(())
+    }
+
+    #[test]
+    fn set_trader_params_preserves_target_signal_and_runtime_state() -> Result<(), Box<dyn Error>> {
+        let state_directory = tempdir()?;
+        let database = Database::open(state_directory.path())?;
+        let credential = database.create_credential("owner", "binance", "primary", &json!({}))?;
+        let signal = json!({"target_qty":"1"});
+        let (trader, _) = database.create_trader(&TraderDraft {
+            owner_id: "owner".into(),
+            name: "alpha".into(),
+            template_id: "template".into(),
+            credential_id: credential.id.clone(),
+            params: json!({"product_id":"BTCUSDT","max_order_qty":"0.01"}),
+            signal: signal.clone(),
+            enabled: true,
+        })?;
+        let params = json!({"product_id":"BTCUSDT","max_order_qty":"0.02"});
+
+        let updated = database
+            .set_trader_params(&trader.id, &params)?
+            .expect("created trader exists");
+
+        assert_eq!(updated.params, params);
+        assert_eq!(updated.signal, signal);
         assert_eq!(updated.credential_id, credential.id);
         assert!(updated.enabled);
         assert_eq!(updated.status, "starting");

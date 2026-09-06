@@ -51,6 +51,7 @@ pub fn router(database: Database, runtime: TraderRuntime, auth: AuthMiniLayer) -
             get(get_trader).put(update_trader).delete(delete_trader),
         )
         .route("/traders/{id}/enabled", patch(set_trader_enabled))
+        .route("/traders/{id}/params", patch(set_trader_params))
         .route("/traders/{id}/signal", patch(set_trader_signal))
         .route("/traders/{id}/signal-history", get(list_signal_history))
         .route("/traders/{id}/signal-token", post(rotate_signal_token))
@@ -312,6 +313,33 @@ async fn set_trader_enabled(
     Ok(Json(trader))
 }
 
+async fn set_trader_params(
+    State(state): State<AppState>,
+    Extension(principal): Extension<AuthMiniPrincipal>,
+    Path(id): Path<String>,
+    Json(input): Json<ParamsInput>,
+) -> Result<Json<Trader>, ApiError> {
+    let actor = Actor::from_principal(&state.database, &principal)?;
+    let trader = state
+        .database
+        .get_trader(&id)?
+        .ok_or_else(ApiError::not_found)?;
+    actor.assert_owner(&trader.owner_id)?;
+    validate_configuration(
+        &trader.template_id,
+        &trader.credential_id,
+        &input.params,
+        &trader.signal,
+    )
+    .map_err(ApiError::bad_request)?;
+    let trader = state
+        .database
+        .set_trader_params(&id, &input.params)?
+        .ok_or_else(ApiError::not_found)?;
+    state.runtime.reconcile().await;
+    Ok(Json(trader))
+}
+
 async fn set_trader_signal(
     State(state): State<AppState>,
     Extension(principal): Extension<AuthMiniPrincipal>,
@@ -482,6 +510,10 @@ struct TraderUpdateInput {
 #[derive(Debug, Deserialize)]
 struct EnabledInput {
     enabled: bool,
+}
+#[derive(Debug, Deserialize)]
+struct ParamsInput {
+    params: Value,
 }
 #[derive(Debug, Deserialize)]
 struct SignalInput {
