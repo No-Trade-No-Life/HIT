@@ -36,6 +36,10 @@ HIT 不提供通用交易所抽象。Binance UM Futures、OKX Swap 与 CTPD 分�
 - 第一个登录并确认初始化的用户成为 `root_user_id`，存放于 SQLite `app_meta`。root 可以查看所有用户的非机密资源；普通用户只能管理自己的资源。
 - Linkit 通知是每位用户独立配置的 Bot 凭证。交易执行失败时，HIT 通过 [Linkit Bot API](https://linkit.ntnl.io) 向该用户配置的用户名发送私信。
 
+## 系统资源
+
+仅 root 可以访问【系统资源】页面及 `GET /api/v1/system/resources`。页面每 5 秒采样部署主机的 CPU、内存、SQLite 所在磁盘和 SQLite 文件大小；SQLite 大小合计主库、WAL（写前日志）与 SHM（共享内存）三个文件，反映 WAL 模式下实际占用的磁盘空间。
+
 ## 外部更新目标信号
 
 ```bash

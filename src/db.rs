@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
@@ -14,6 +14,7 @@ use crate::crypto::{Cipher, CipherError};
 pub struct Database {
     connection: Arc<Mutex<Connection>>,
     cipher: Cipher,
+    database_path: Arc<PathBuf>,
 }
 
 impl std::fmt::Debug for Database {
@@ -102,7 +103,8 @@ impl Database {
     pub fn open(state_directory: impl AsRef<Path>) -> Result<Self, DatabaseError> {
         let state_directory = state_directory.as_ref();
         let cipher = Cipher::load_or_create(state_directory)?;
-        let connection = Connection::open(state_directory.join("default.sqlite3"))?;
+        let database_path = state_directory.join("default.sqlite3");
+        let connection = Connection::open(&database_path)?;
         connection.execute_batch(
             "
             PRAGMA journal_mode = WAL;
@@ -168,7 +170,12 @@ impl Database {
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
             cipher,
+            database_path: Arc::new(database_path),
         })
+    }
+
+    pub fn database_path(&self) -> PathBuf {
+        self.database_path.as_ref().clone()
     }
 
     pub fn root_user_id(&self) -> Result<Option<String>, DatabaseError> {

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use auth_mini_axum::{AuthMiniLayer, AuthMiniPrincipal};
 use axum::{
     Json, Router,
@@ -11,6 +13,7 @@ use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
+use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
@@ -19,11 +22,13 @@ use crate::db::{
     TraderUpdate,
 };
 use crate::engine::{Template, TraderRuntime, template, templates, validate_configuration};
+use crate::resources::{ResourceMonitor, SystemResourcesSnapshot};
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct AppState {
     database: Database,
     runtime: TraderRuntime,
+    resources: Arc<Mutex<ResourceMonitor>>,
 }
 
 #[derive(RustEmbed)]
@@ -31,10 +36,16 @@ struct AppState {
 struct WebAssets;
 
 pub fn router(database: Database, runtime: TraderRuntime, auth: AuthMiniLayer) -> Router {
-    let state = AppState { database, runtime };
+    let resources = Arc::new(Mutex::new(ResourceMonitor::new(database.database_path())));
+    let state = AppState {
+        database,
+        runtime,
+        resources,
+    };
     let private = Router::new()
         .route("/me", get(me))
         .route("/setup", post(setup_root))
+        .route("/system/resources", get(system_resources))
         .route(
             "/credentials",
             get(list_credentials).post(create_credential),
@@ -132,6 +143,14 @@ async fn list_credentials(
         Some(actor.user_id.as_str())
     };
     Ok(Json(state.database.list_credentials(owner_filter)?))
+}
+
+async fn system_resources(
+    State(state): State<AppState>,
+    Extension(principal): Extension<AuthMiniPrincipal>,
+) -> Result<Json<SystemResourcesSnapshot>, ApiError> {
+    Actor::from_principal(&state.database, &principal)?.assert_root()?;
+    Ok(Json(state.resources.lock().await.sample()?))
 }
 
 async fn get_credential(
@@ -631,12 +650,21 @@ impl Actor {
             Err(ApiError::forbidden("resource belongs to another user"))
         }
     }
+    fn assert_root(&self) -> Result<(), ApiError> {
+        if self.is_root {
+            Ok(())
+        } else {
+            Err(ApiError::forbidden("root user is required"))
+        }
+    }
 }
 
 #[derive(Debug, Error)]
 enum ApiError {
     #[error("state storage failed")]
     Database(#[from] DatabaseError),
+    #[error("resource sampling failed")]
+    Resources(#[from] std::io::Error),
     #[error("bad request: {0}")]
     BadRequest(String),
     #[error("not found")]
@@ -665,14 +693,14 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = match &self {
-            Self::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::Database(_) | Self::Resources(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
         };
         let message = match &self {
-            Self::Database(_) => "internal state error".to_owned(),
+            Self::Database(_) | Self::Resources(_) => "internal state error".to_owned(),
             other => other.to_string(),
         };
         (status, Json(json!({"error":message}))).into_response()
@@ -682,6 +710,21 @@ impl IntoResponse for ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_resources_require_root_actor() {
+        let root = Actor {
+            user_id: "root".into(),
+            is_root: true,
+        };
+        let user = Actor {
+            user_id: "user".into(),
+            is_root: false,
+        };
+
+        assert!(root.assert_root().is_ok());
+        assert!(matches!(user.assert_root(), Err(ApiError::Forbidden(_))));
+    }
 
     #[tokio::test]
     async fn template_endpoint_returns_complete_schema_metadata() {
