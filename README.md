@@ -27,6 +27,8 @@ HIT 不提供通用交易所抽象。Binance UM Futures、OKX Swap 与 CTPD 分�
 
 `GET /api/templates` 返回所有可用策略模板。每个模板包含 `id`、`name`、`credential_type`、`description`、`params_schema` 和 `signal_schema`；后两项使用 JSON Schema（JSON 结构校验规范）描述可填写字段、必填项、标题和说明。创建交易者时，HIT 会根据所选凭证自动填入账户标识，因此它不属于 `params_schema` 的用户输入字段。
 
+交易者详情页会依据这两份 Schema 同时展示执行参数和目标信号的字段标题、说明与当前值，并提供原始 JSON tab 供人工编辑。参数保存只调用专用的 `PATCH /api/v1/traders/{id}/params`，不会回写目标信号、交易凭证或运行开关。
+
 ## 认证与权限
 
 - 前端使用 `auth-mini-react-components` 对接 [Auth Mini](https://auth.ntnl.io)。登录令牌同时包含 `hit.ntnl.io`（HIT 回调主机名）和 `linkit.ntnl.io` 两个 JWT audience（受众，即允许接收该令牌的服务），以便用户在 Linkit 集成中复用同一登录会话。
