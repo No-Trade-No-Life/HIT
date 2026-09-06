@@ -386,6 +386,17 @@ impl Database {
         self.get_trader(id)
     }
 
+    pub fn set_trader_name(&self, id: &str, name: &str) -> Result<Option<Trader>, DatabaseError> {
+        let changed = self.connection()?.execute(
+            "UPDATE traders SET name = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, name, now()],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        self.get_trader(id)
+    }
+
     pub fn set_trader_enabled(
         &self,
         id: &str,
@@ -760,6 +771,37 @@ mod tests {
             .set_trader_params(&trader.id, &params)?
             .expect("created trader exists");
 
+        assert_eq!(updated.params, params);
+        assert_eq!(updated.signal, signal);
+        assert_eq!(updated.credential_id, credential.id);
+        assert!(updated.enabled);
+        assert_eq!(updated.status, "starting");
+        Ok(())
+    }
+
+    #[test]
+    fn set_trader_name_preserves_execution_configuration_and_runtime_state()
+    -> Result<(), Box<dyn Error>> {
+        let state_directory = tempdir()?;
+        let database = Database::open(state_directory.path())?;
+        let credential = database.create_credential("owner", "binance", "primary", &json!({}))?;
+        let params = json!({"product_id":"BTCUSDT","max_order_qty":"0.01"});
+        let signal = json!({"target_qty":"1"});
+        let (trader, _) = database.create_trader(&TraderDraft {
+            owner_id: "owner".into(),
+            name: "alpha".into(),
+            template_id: "template".into(),
+            credential_id: credential.id.clone(),
+            params: params.clone(),
+            signal: signal.clone(),
+            enabled: true,
+        })?;
+
+        let updated = database
+            .set_trader_name(&trader.id, "production alpha")?
+            .expect("created trader exists");
+
+        assert_eq!(updated.name, "production alpha");
         assert_eq!(updated.params, params);
         assert_eq!(updated.signal, signal);
         assert_eq!(updated.credential_id, credential.id);

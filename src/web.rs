@@ -62,6 +62,7 @@ pub fn router(database: Database, runtime: TraderRuntime, auth: AuthMiniLayer) -
             get(get_trader).put(update_trader).delete(delete_trader),
         )
         .route("/traders/{id}/enabled", patch(set_trader_enabled))
+        .route("/traders/{id}/name", patch(set_trader_name))
         .route("/traders/{id}/params", patch(set_trader_params))
         .route("/traders/{id}/signal", patch(set_trader_signal))
         .route("/traders/{id}/signal-history", get(list_signal_history))
@@ -332,6 +333,26 @@ async fn set_trader_enabled(
     Ok(Json(trader))
 }
 
+async fn set_trader_name(
+    State(state): State<AppState>,
+    Extension(principal): Extension<AuthMiniPrincipal>,
+    Path(id): Path<String>,
+    Json(input): Json<NameInput>,
+) -> Result<Json<Trader>, ApiError> {
+    let actor = Actor::from_principal(&state.database, &principal)?;
+    let trader = state
+        .database
+        .get_trader(&id)?
+        .ok_or_else(ApiError::not_found)?;
+    actor.assert_owner(&trader.owner_id)?;
+    validate_trader_name(&input.name)?;
+    let trader = state
+        .database
+        .set_trader_name(&id, &input.name)?
+        .ok_or_else(ApiError::not_found)?;
+    Ok(Json(trader))
+}
+
 async fn set_trader_params(
     State(state): State<AppState>,
     Extension(principal): Extension<AuthMiniPrincipal>,
@@ -531,6 +552,10 @@ struct EnabledInput {
     enabled: bool,
 }
 #[derive(Debug, Deserialize)]
+struct NameInput {
+    name: String,
+}
+#[derive(Debug, Deserialize)]
 struct ParamsInput {
     params: Value,
 }
@@ -595,9 +620,7 @@ fn validate_input(
     owner_id: &str,
     input: &TraderInput,
 ) -> Result<(), ApiError> {
-    if input.name.trim().is_empty() {
-        return Err(ApiError::bad_request("trader name is required"));
-    }
+    validate_trader_name(&input.name)?;
     let template = template(&input.template_id)
         .ok_or_else(|| ApiError::bad_request("unknown trader template"))?;
     let credential = database
@@ -618,6 +641,13 @@ fn validate_input(
         &input.signal,
     )
     .map_err(ApiError::bad_request)
+}
+
+fn validate_trader_name(name: &str) -> Result<(), ApiError> {
+    if name.trim().is_empty() {
+        return Err(ApiError::bad_request("trader name is required"));
+    }
+    Ok(())
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
@@ -724,6 +754,12 @@ mod tests {
 
         assert!(root.assert_root().is_ok());
         assert!(matches!(user.assert_root(), Err(ApiError::Forbidden(_))));
+    }
+
+    #[test]
+    fn trader_name_must_not_be_blank() {
+        assert!(validate_trader_name("  ").is_err());
+        assert!(validate_trader_name("alpha").is_ok());
     }
 
     #[tokio::test]
