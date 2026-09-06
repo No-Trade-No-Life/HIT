@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { CircleAlertIcon, HistoryIcon, KeyRoundIcon } from "lucide-react"
+import { CircleAlertIcon, HistoryIcon, KeyRoundIcon, PencilIcon } from "lucide-react"
 import { useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -34,7 +35,32 @@ export function TraderDetailPage({ token, t, onChanged }: { token: string; t: Co
   const value = trader.data
   const template = templates.data?.find(item => item.id === value.template_id)
   const refresh = () => { void trader.refetch(); void signalHistory.refetch(); onChanged() }
-  return <div className="flex flex-col gap-6"><div className="flex flex-wrap items-end justify-between gap-3"><div><Button variant="ghost" size="sm" onClick={() => navigate("/traders")}>← {t.traders}</Button><h1 className="mt-2 mb-0 text-2xl font-semibold tracking-tight">{value.name}</h1><p className="mt-1 font-mono text-xs text-muted-foreground">{value.id}</p></div><div className="flex items-center gap-3"><StatusBadge trader={value} t={t} /><TraderEnabledSwitch trader={value} token={token} t={t} onChanged={onChanged} /></div></div>{value.last_error && <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{t.failed}</AlertTitle><AlertDescription>{value.last_error}</AlertDescription></Alert>}<div className="grid gap-4 lg:grid-cols-2"><ParamsCard key={JSON.stringify(value.params)} trader={value} schema={template?.params_schema} token={token} t={t} onSaved={refresh} /><SignalCard key={JSON.stringify(value.signal)} trader={value} schema={template?.signal_schema} token={token} t={t} onSaved={refresh} /></div><Card><CardHeader><CardTitle>{t.signalHistory}</CardTitle><CardDescription>{t.signalHistoryDescription}</CardDescription></CardHeader><CardContent>{signalHistory.data?.length ? <Table><TableHeader><TableRow><TableHead>{t.signalPayload}</TableHead><TableHead>{t.occurrences}</TableHead><TableHead>{t.firstSeen}</TableHead><TableHead>{t.updated}</TableHead></TableRow></TableHeader><TableBody>{signalHistory.data.map(entry => <TableRow key={entry.id}><TableCell className="min-w-64 align-top"><JsonBlock value={entry.signal} /></TableCell><TableCell><Badge variant="secondary">{entry.occurrences}</Badge></TableCell><TableCell className="whitespace-nowrap text-muted-foreground">{formatTime(entry.created_at)}</TableCell><TableCell className="whitespace-nowrap text-muted-foreground">{formatTime(entry.updated_at)}</TableCell></TableRow>)}</TableBody></Table> : <EmptyState title={t.signalHistory} description={t.signalHistoryDescription} icon={HistoryIcon} />}</CardContent></Card></div>
+  return <div className="flex flex-col gap-6">
+    <div className="flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <Button variant="ghost" size="sm" onClick={() => navigate("/traders")}>← {t.traders}</Button>
+        <TraderNameEditor trader={value} token={token} t={t} onSaved={refresh} />
+        <p className="mt-1 font-mono text-xs text-muted-foreground">{value.id}</p>
+      </div>
+      <div className="flex items-center gap-3"><StatusBadge trader={value} t={t} /><TraderEnabledSwitch trader={value} token={token} t={t} onChanged={onChanged} /></div>
+    </div>
+    {value.last_error && <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{t.failed}</AlertTitle><AlertDescription>{value.last_error}</AlertDescription></Alert>}
+    <div className="grid gap-4 lg:grid-cols-2"><ParamsCard key={JSON.stringify(value.params)} trader={value} schema={template?.params_schema} token={token} t={t} onSaved={refresh} /><SignalCard key={JSON.stringify(value.signal)} trader={value} schema={template?.signal_schema} token={token} t={t} onSaved={refresh} /></div>
+    <Card><CardHeader><CardTitle>{t.signalHistory}</CardTitle><CardDescription>{t.signalHistoryDescription}</CardDescription></CardHeader><CardContent>{signalHistory.data?.length ? <Table><TableHeader><TableRow><TableHead>{t.signalPayload}</TableHead><TableHead>{t.occurrences}</TableHead><TableHead>{t.firstSeen}</TableHead><TableHead>{t.updated}</TableHead></TableRow></TableHeader><TableBody>{signalHistory.data.map(entry => <TableRow key={entry.id}><TableCell className="min-w-64 align-top"><JsonBlock value={entry.signal} /></TableCell><TableCell><Badge variant="secondary">{entry.occurrences}</Badge></TableCell><TableCell className="whitespace-nowrap text-muted-foreground">{formatTime(entry.created_at)}</TableCell><TableCell className="whitespace-nowrap text-muted-foreground">{formatTime(entry.updated_at)}</TableCell></TableRow>)}</TableBody></Table> : <EmptyState title={t.signalHistory} description={t.signalHistoryDescription} icon={HistoryIcon} />}</CardContent></Card>
+  </div>
+}
+
+function TraderNameEditor({ trader, token, t, onSaved }: { trader: Trader; token: string; t: Copy; onSaved: () => void }) {
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState(trader.name)
+  const [error, setError] = useState<string | null>(null)
+  const save = useMutation({
+    mutationFn: () => request<Trader>(`/api/v1/traders/${trader.id}/name`, token, { method: "PATCH", body: JSON.stringify({ name }) }),
+    onSuccess: () => { toast.success(t.traderNameSaved); setEditing(false); onSaved() },
+    onError: (requestError: Error) => { setError(requestError.message); showError(requestError) },
+  })
+  if (!editing) return <div className="mt-2 flex flex-wrap items-center gap-2"><h1 className="m-0 text-2xl font-semibold tracking-tight">{trader.name}</h1><Button variant="ghost" size="sm" onClick={() => { setName(trader.name); setError(null); setEditing(true) }}><PencilIcon data-icon="inline-start" />{t.editTraderName}</Button></div>
+  return <form className="mt-2" onSubmit={event => { event.preventDefault(); setError(null); save.mutate() }}><FieldGroup><Field data-invalid={Boolean(error)}><FieldLabel htmlFor={`trader-name-${trader.id}`}>{t.traderName}</FieldLabel><div className="flex flex-wrap items-center gap-2"><Input id={`trader-name-${trader.id}`} value={name} onChange={event => setName(event.target.value)} disabled={save.isPending} required /><Button type="submit" disabled={save.isPending}>{save.isPending ? t.saving : t.save}</Button><Button type="button" variant="outline" onClick={() => { setName(trader.name); setError(null); setEditing(false) }} disabled={save.isPending}>{t.cancel}</Button></div><FieldError>{error}</FieldError></Field></FieldGroup></form>
 }
 
 function ParamsCard({ trader, schema, token, t, onSaved }: { trader: Trader; schema?: JsonSchema; token: string; t: Copy; onSaved: () => void }) {
