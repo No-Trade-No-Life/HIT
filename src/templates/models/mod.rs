@@ -120,11 +120,8 @@ pub enum TraderRunError {
     #[error("CTPD CFFEX trader only accepts IF, IH, IC, or IM contracts, got {instrument_id}")]
     CtpdCffexInvalidInstrument { instrument_id: String },
 
-    #[error("CTPD CFFEX trader target volumes must be non-negative")]
-    CtpdCffexInvalidTarget,
-
-    #[error("CTPD CFFEX trader buy_price and sell_price must be positive")]
-    CtpdCffexInvalidPrice,
+    #[error("CTPD CFFEX trader net_volume cannot be {net_volume}")]
+    CtpdCffexInvalidNetVolume { net_volume: i32 },
 
     #[error("CTPD CFFEX trader credential must contain a base URL and API key")]
     CtpdCffexInvalidCredential,
@@ -155,13 +152,13 @@ pub enum TraderRunError {
     CtpdCffexInvalidOrderLimit { max_limit_order_volume: i32 },
 
     #[error(
-        "CTPD contract {instrument_id} does not accept configured {side} price {price} at tick {price_tick}"
+        "CTPD returned invalid best {side} quote for {instrument_id}: price={price}, volume={volume}"
     )]
-    CtpdCffexInvalidPriceTick {
+    CtpdCffexInvalidBbo {
         instrument_id: String,
         side: &'static str,
-        price: Decimal,
-        price_tick: f64,
+        price: f64,
+        volume: i32,
     },
 }
 

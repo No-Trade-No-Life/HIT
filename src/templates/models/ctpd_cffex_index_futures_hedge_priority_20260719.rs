@@ -1,7 +1,3 @@
-use rust_decimal::{
-    Decimal,
-    prelude::{FromPrimitive, ToPrimitive},
-};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -9,7 +5,7 @@ use crate::{
     AccountCredential,
     exchanges::ctpd::{
         CtpdClient, CtpdCredential, CtpdInstrument, CtpdOffset, CtpdOrder, CtpdOrderDirection,
-        CtpdPlaceOrderRequest, CtpdPosition,
+        CtpdPlaceOrderRequest, CtpdPosition, CtpdTick,
     },
     runtime::ResourceClaim,
 };
@@ -22,12 +18,7 @@ const CFFEX: &str = "CFFEX";
 pub struct CtpdCffexIndexFuturesHedgePriorityConfig {
     pub account_id: String,
     pub instrument_id: String,
-    pub target_long_volume: i32,
-    pub target_short_volume: i32,
-    #[serde(with = "rust_decimal::serde::str")]
-    pub buy_price: Decimal,
-    #[serde(with = "rust_decimal::serde::str")]
-    pub sell_price: Decimal,
+    pub net_volume: i32,
 }
 
 impl CtpdCffexIndexFuturesHedgePriorityConfig {
@@ -55,7 +46,9 @@ pub enum CtpdCffexExecutionStage {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CtpdCffexPlannedOrder {
     pub stage: CtpdCffexExecutionStage,
-    pub request: CtpdPlaceOrderRequest,
+    pub direction: CtpdOrderDirection,
+    pub offset: CtpdOffset,
+    pub volume: i32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,8 +61,8 @@ pub struct CtpdCffexIndexFuturesHedgePriorityRun {
 ///
 /// # Errors
 ///
-/// Returns an error when the model is not constrained to IF/IH/IC/IM, a target is negative,
-/// a price is non-positive, or the credential does not belong to CTPD.
+/// Returns an error when the model is not constrained to IF/IH/IC/IM or the credential does not
+/// belong to CTPD.
 pub fn validate_ctpd_cffex_index_futures_hedge_priority_config(
     config: &CtpdCffexIndexFuturesHedgePriorityConfig,
     credential: &AccountCredential,
@@ -79,12 +72,7 @@ pub fn validate_ctpd_cffex_index_futures_hedge_priority_config(
             instrument_id: config.instrument_id.clone(),
         });
     }
-    if config.target_long_volume < 0 || config.target_short_volume < 0 {
-        return Err(TraderRunError::CtpdCffexInvalidTarget);
-    }
-    if config.buy_price <= Decimal::ZERO || config.sell_price <= Decimal::ZERO {
-        return Err(TraderRunError::CtpdCffexInvalidPrice);
-    }
+    target_volumes(config.net_volume)?;
     match credential {
         AccountCredential::CtpdHttpApiKeyV1 { base_url, api_key }
             if !base_url.is_empty() && !api_key.is_empty() =>
@@ -115,6 +103,7 @@ pub fn plan_ctpd_cffex_index_futures_hedge_priority_orders(
             max_limit_order_volume,
         });
     }
+    let (target_long_volume, target_short_volume) = target_volumes(config.net_volume)?;
 
     let long = position_summary(
         positions,
@@ -126,14 +115,14 @@ pub fn plan_ctpd_cffex_index_futures_hedge_priority_orders(
         &config.instrument_id,
         CtpdPositionDirection::Short,
     )?;
-    let long_excess = (long.volume - config.target_long_volume).max(0);
-    let short_excess = (short.volume - config.target_short_volume).max(0);
+    let long_excess = (long.volume - target_long_volume).max(0);
+    let short_excess = (short.volume - target_short_volume).max(0);
     let long_close_yesterday = long.yesterday_volume.min(long_excess);
     let short_close_yesterday = short.yesterday_volume.min(short_excess);
     let long_after_close_yesterday = long.volume - long_close_yesterday;
     let short_after_close_yesterday = short.volume - short_close_yesterday;
-    let long_open = (config.target_long_volume - long_after_close_yesterday).max(0);
-    let short_open = (config.target_short_volume - short_after_close_yesterday).max(0);
+    let long_open = (target_long_volume - long_after_close_yesterday).max(0);
+    let short_open = (target_short_volume - short_after_close_yesterday).max(0);
     let long_close_today = (long_excess - long_close_yesterday).min(long.today_volume);
     let short_close_today = (short_excess - short_close_yesterday).min(short.today_volume);
 
@@ -141,7 +130,6 @@ pub fn plan_ctpd_cffex_index_futures_hedge_priority_orders(
     append_orders(
         &mut plan,
         CtpdCffexExecutionStage::CloseYesterday,
-        config,
         CtpdOrderDirection::Sell,
         CtpdOffset::CloseYesterday,
         long_close_yesterday,
@@ -150,7 +138,6 @@ pub fn plan_ctpd_cffex_index_futures_hedge_priority_orders(
     append_orders(
         &mut plan,
         CtpdCffexExecutionStage::CloseYesterday,
-        config,
         CtpdOrderDirection::Buy,
         CtpdOffset::CloseYesterday,
         short_close_yesterday,
@@ -159,7 +146,6 @@ pub fn plan_ctpd_cffex_index_futures_hedge_priority_orders(
     append_orders(
         &mut plan,
         CtpdCffexExecutionStage::OpenHedge,
-        config,
         CtpdOrderDirection::Buy,
         CtpdOffset::Open,
         long_open,
@@ -168,7 +154,6 @@ pub fn plan_ctpd_cffex_index_futures_hedge_priority_orders(
     append_orders(
         &mut plan,
         CtpdCffexExecutionStage::OpenHedge,
-        config,
         CtpdOrderDirection::Sell,
         CtpdOffset::Open,
         short_open,
@@ -177,7 +162,6 @@ pub fn plan_ctpd_cffex_index_futures_hedge_priority_orders(
     append_orders(
         &mut plan,
         CtpdCffexExecutionStage::CloseToday,
-        config,
         CtpdOrderDirection::Sell,
         CtpdOffset::CloseToday,
         long_close_today,
@@ -186,7 +170,6 @@ pub fn plan_ctpd_cffex_index_futures_hedge_priority_orders(
     append_orders(
         &mut plan,
         CtpdCffexExecutionStage::CloseToday,
-        config,
         CtpdOrderDirection::Buy,
         CtpdOffset::CloseToday,
         short_close_today,
@@ -246,7 +229,6 @@ pub async fn run_ctpd_cffex_index_futures_hedge_priority_once_with_client(
     }
     let instruments = client.get_instruments(&config.instrument_id).await?;
     let instrument = verify_instrument(config, &instruments)?;
-    validate_price_ticks(config, instrument)?;
     let plan = plan_ctpd_cffex_index_futures_hedge_priority_orders(
         config,
         &client.get_positions().await?,
@@ -264,8 +246,17 @@ pub async fn run_ctpd_cffex_index_futures_hedge_priority_once_with_client(
         .collect::<Vec<_>>();
     let mut orders = Vec::with_capacity(plan.len());
     for item in &plan {
+        let tick = client.next_tick(&config.instrument_id).await?;
+        let request = CtpdPlaceOrderRequest {
+            instrument_id: config.instrument_id.clone(),
+            exchange_id: CFFEX.to_owned(),
+            direction: item.direction,
+            offset: item.offset,
+            price: order_price(&tick, item.direction, instrument)?,
+            volume: item.volume,
+        };
         let idempotency_key = Uuid::new_v4().simple().to_string();
-        orders.push(client.place_order(&idempotency_key, &item.request).await?);
+        orders.push(client.place_order(&idempotency_key, &request).await?);
     }
     Ok(CtpdCffexIndexFuturesHedgePriorityRun { plan, orders })
 }
@@ -344,30 +335,9 @@ fn position_summary(
     Ok(summary)
 }
 
-fn validate_price_ticks(
-    config: &CtpdCffexIndexFuturesHedgePriorityConfig,
-    instrument: &CtpdInstrument,
-) -> Result<()> {
-    for (side, price) in [("buy", config.buy_price), ("sell", config.sell_price)] {
-        let matches_tick = Decimal::from_f64(instrument.price_tick).is_some_and(|price_tick| {
-            price_tick > Decimal::ZERO && price % price_tick == Decimal::ZERO
-        });
-        if !matches_tick {
-            return Err(TraderRunError::CtpdCffexInvalidPriceTick {
-                instrument_id: config.instrument_id.clone(),
-                side,
-                price,
-                price_tick: instrument.price_tick,
-            });
-        }
-    }
-    Ok(())
-}
-
 fn append_orders(
     plan: &mut Vec<CtpdCffexPlannedOrder>,
     stage: CtpdCffexExecutionStage,
-    config: &CtpdCffexIndexFuturesHedgePriorityConfig,
     direction: CtpdOrderDirection,
     offset: CtpdOffset,
     mut volume: i32,
@@ -377,29 +347,42 @@ fn append_orders(
         let order_volume = volume.min(max_limit_order_volume);
         plan.push(CtpdCffexPlannedOrder {
             stage,
-            request: CtpdPlaceOrderRequest {
-                instrument_id: config.instrument_id.clone(),
-                exchange_id: CFFEX.to_owned(),
-                direction,
-                offset,
-                price: order_price(config, direction),
-                volume: order_volume,
-            },
+            direction,
+            offset,
+            volume: order_volume,
         });
         volume -= order_volume;
     }
 }
 
-fn order_price(
-    config: &CtpdCffexIndexFuturesHedgePriorityConfig,
-    direction: CtpdOrderDirection,
-) -> f64 {
-    match direction {
-        CtpdOrderDirection::Buy => config.buy_price,
-        CtpdOrderDirection::Sell => config.sell_price,
+fn target_volumes(net_volume: i32) -> Result<(i32, i32)> {
+    if net_volume >= 0 {
+        return Ok((net_volume, 0));
     }
-    .to_f64()
-    .expect("validated positive Decimal price must fit f64")
+    let short_volume = net_volume
+        .checked_abs()
+        .ok_or(TraderRunError::CtpdCffexInvalidNetVolume { net_volume })?;
+    Ok((0, short_volume))
+}
+
+fn order_price(
+    tick: &CtpdTick,
+    direction: CtpdOrderDirection,
+    instrument: &CtpdInstrument,
+) -> Result<f64> {
+    let (side, price, volume) = match direction {
+        CtpdOrderDirection::Buy => ("ask", tick.ask_price_1, tick.ask_volume_1),
+        CtpdOrderDirection::Sell => ("bid", tick.bid_price_1, tick.bid_volume_1),
+    };
+    if price.is_finite() && price > 0.0 && price < f64::MAX && volume > 0 {
+        return Ok(price);
+    }
+    Err(TraderRunError::CtpdCffexInvalidBbo {
+        instrument_id: instrument.instrument_id.clone(),
+        side,
+        price,
+        volume,
+    })
 }
 
 #[cfg(test)]
@@ -409,7 +392,7 @@ mod tests {
     use axum::{
         Json, Router,
         extract::State,
-        http::{HeaderMap, StatusCode},
+        http::{HeaderMap, StatusCode, header},
         routing::get,
     };
     use serde_json::{Value, json};
@@ -417,17 +400,11 @@ mod tests {
 
     use super::*;
 
-    fn config(
-        target_long_volume: i32,
-        target_short_volume: i32,
-    ) -> CtpdCffexIndexFuturesHedgePriorityConfig {
+    fn config(net_volume: i32) -> CtpdCffexIndexFuturesHedgePriorityConfig {
         CtpdCffexIndexFuturesHedgePriorityConfig {
             account_id: "ctp-main".into(),
             instrument_id: "IF2609".into(),
-            target_long_volume,
-            target_short_volume,
-            buy_price: "4000.2".parse().unwrap(),
-            sell_price: "4000.0".parse().unwrap(),
+            net_volume,
         }
     }
 
@@ -443,7 +420,7 @@ mod tests {
     #[test]
     fn reverses_long_position_in_cffex_fee_and_margin_order() -> Result<()> {
         let plan = plan_ctpd_cffex_index_futures_hedge_priority_orders(
-            &config(0, 3),
+            &config(-3),
             &[position("long", 5, 2)],
             100,
         )?;
@@ -453,36 +430,21 @@ mod tests {
             vec![
                 CtpdCffexPlannedOrder {
                     stage: CtpdCffexExecutionStage::CloseYesterday,
-                    request: CtpdPlaceOrderRequest {
-                        instrument_id: "IF2609".into(),
-                        exchange_id: CFFEX.into(),
-                        direction: CtpdOrderDirection::Sell,
-                        offset: CtpdOffset::CloseYesterday,
-                        price: 4000.0,
-                        volume: 3,
-                    },
+                    direction: CtpdOrderDirection::Sell,
+                    offset: CtpdOffset::CloseYesterday,
+                    volume: 3,
                 },
                 CtpdCffexPlannedOrder {
                     stage: CtpdCffexExecutionStage::OpenHedge,
-                    request: CtpdPlaceOrderRequest {
-                        instrument_id: "IF2609".into(),
-                        exchange_id: CFFEX.into(),
-                        direction: CtpdOrderDirection::Sell,
-                        offset: CtpdOffset::Open,
-                        price: 4000.0,
-                        volume: 3,
-                    },
+                    direction: CtpdOrderDirection::Sell,
+                    offset: CtpdOffset::Open,
+                    volume: 3,
                 },
                 CtpdCffexPlannedOrder {
                     stage: CtpdCffexExecutionStage::CloseToday,
-                    request: CtpdPlaceOrderRequest {
-                        instrument_id: "IF2609".into(),
-                        exchange_id: CFFEX.into(),
-                        direction: CtpdOrderDirection::Sell,
-                        offset: CtpdOffset::CloseToday,
-                        price: 4000.0,
-                        volume: 2,
-                    },
+                    direction: CtpdOrderDirection::Sell,
+                    offset: CtpdOffset::CloseToday,
+                    volume: 2,
                 },
             ]
         );
@@ -492,23 +454,23 @@ mod tests {
     #[test]
     fn retains_required_today_position_after_closing_yesterday_first() -> Result<()> {
         let plan = plan_ctpd_cffex_index_futures_hedge_priority_orders(
-            &config(3, 0),
+            &config(3),
             &[position("long", 9, 4)],
             100,
         )?;
 
         assert_eq!(plan.len(), 2);
-        assert_eq!(plan[0].request.offset, CtpdOffset::CloseYesterday);
-        assert_eq!(plan[0].request.volume, 5);
-        assert_eq!(plan[1].request.offset, CtpdOffset::CloseToday);
-        assert_eq!(plan[1].request.volume, 1);
+        assert_eq!(plan[0].offset, CtpdOffset::CloseYesterday);
+        assert_eq!(plan[0].volume, 5);
+        assert_eq!(plan[1].offset, CtpdOffset::CloseToday);
+        assert_eq!(plan[1].volume, 1);
         Ok(())
     }
 
     #[test]
     fn chunks_each_stage_without_reordering_stages() -> Result<()> {
         let plan = plan_ctpd_cffex_index_futures_hedge_priority_orders(
-            &config(0, 3),
+            &config(-3),
             &[position("long", 5, 2)],
             2,
         )?;
@@ -523,13 +485,40 @@ mod tests {
                 CtpdCffexExecutionStage::CloseToday,
             ]
         );
-        assert!(plan.iter().all(|item| item.request.volume <= 2));
+        assert!(plan.iter().all(|item| item.volume <= 2));
+        Ok(())
+    }
+
+    #[test]
+    fn bbo_taker_uses_best_opposing_price() -> Result<()> {
+        let instrument = CtpdInstrument {
+            instrument_id: "IF2609".into(),
+            exchange_id: CFFEX.into(),
+            price_tick: 0.2,
+            max_limit_order_volume: 100,
+        };
+        let tick = CtpdTick {
+            instrument_id: "IF2609".into(),
+            bid_price_1: 3999.8,
+            bid_volume_1: 10,
+            ask_price_1: 4000.0,
+            ask_volume_1: 12,
+        };
+
+        assert_eq!(
+            order_price(&tick, CtpdOrderDirection::Buy, &instrument)?,
+            4000.0
+        );
+        assert_eq!(
+            order_price(&tick, CtpdOrderDirection::Sell, &instrument)?,
+            3999.8
+        );
         Ok(())
     }
 
     #[test]
     fn rejects_non_index_future_instrument() {
-        let mut invalid = config(0, 0);
+        let mut invalid = config(0);
         invalid.instrument_id = "rb2610".into();
         let credential = AccountCredential::CtpdHttpApiKeyV1 {
             base_url: "http://127.0.0.1:8080".into(),
@@ -541,9 +530,11 @@ mod tests {
         ));
     }
 
+    type MockOrderRequest = (String, String, String, f64);
+
     #[derive(Clone, Default)]
     struct MockCtpdState {
-        requests: Arc<Mutex<Vec<(String, String, String)>>>,
+        requests: Arc<Mutex<Vec<MockOrderRequest>>>,
         outstanding: bool,
     }
 
@@ -556,6 +547,7 @@ mod tests {
             .route("/v1/status", get(mock_status))
             .route("/v1/instruments", get(mock_instruments))
             .route("/v1/positions", get(mock_positions))
+            .route("/v1/ticks", get(mock_tick))
             .route("/v1/orders", get(mock_orders).post(mock_order))
             .with_state(state.clone());
         let server = tokio::spawn(async move {
@@ -567,14 +559,19 @@ mod tests {
         })?;
 
         let run =
-            run_ctpd_cffex_index_futures_hedge_priority_once_with_client(&config(0, 3), &client)
+            run_ctpd_cffex_index_futures_hedge_priority_once_with_client(&config(-3), &client)
                 .await?;
         server.abort();
 
         assert_eq!(run.orders.len(), 1);
         assert_eq!(
             *state.requests.lock().await,
-            vec![("Bearer ctpd-test-key".into(), "close".into(), "sell".into())]
+            vec![(
+                "Bearer ctpd-test-key".into(),
+                "close".into(),
+                "sell".into(),
+                3999.8,
+            )]
         );
         Ok(())
     }
@@ -600,7 +597,7 @@ mod tests {
         })?;
 
         let run =
-            run_ctpd_cffex_index_futures_hedge_priority_once_with_client(&config(0, 3), &client)
+            run_ctpd_cffex_index_futures_hedge_priority_once_with_client(&config(-3), &client)
                 .await?;
         server.abort();
 
@@ -630,6 +627,13 @@ mod tests {
             "volume": 5,
             "today_volume": 2
         }]))
+    }
+
+    async fn mock_tick() -> ([(header::HeaderName, &'static str); 1], String) {
+        (
+            [(header::CONTENT_TYPE, "text/event-stream")],
+            "event: tick\ndata: {\"instrument_id\":\"IF2609\",\"bid_price_1\":3999.8,\"bid_volume_1\":10,\"ask_price_1\":4000.0,\"ask_volume_1\":12}\n\n".into(),
+        )
     }
 
     async fn mock_orders(State(state): State<MockCtpdState>) -> Json<Value> {
@@ -671,6 +675,7 @@ mod tests {
             authorization,
             request["offset"].as_str().unwrap().to_owned(),
             request["direction"].as_str().unwrap().to_owned(),
+            request["price"].as_f64().unwrap(),
         ));
         (
             StatusCode::ACCEPTED,
