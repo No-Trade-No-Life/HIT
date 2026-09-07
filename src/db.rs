@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -33,6 +33,8 @@ pub enum DatabaseError {
     Cipher(#[from] CipherError),
     #[error("stored JSON is invalid")]
     Json(#[from] serde_json::Error),
+    #[error("legacy CTPD trader configuration is invalid")]
+    LegacyCtpdTraderConfiguration,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -104,7 +106,7 @@ impl Database {
         let state_directory = state_directory.as_ref();
         let cipher = Cipher::load_or_create(state_directory)?;
         let database_path = state_directory.join("default.sqlite3");
-        let connection = Connection::open(&database_path)?;
+        let mut connection = Connection::open(&database_path)?;
         connection.execute_batch(
             "
             PRAGMA journal_mode = WAL;
@@ -166,6 +168,7 @@ impl Database {
                 [],
             )?;
         }
+        migrate_ctpd_bbo_taker_configuration(&mut connection)?;
         connection.execute_batch("DROP TABLE IF EXISTS trader_runs;")?;
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -660,6 +663,72 @@ fn record_signal_patch(
         .map_err(DatabaseError::Sqlite)
 }
 
+fn migrate_ctpd_bbo_taker_configuration(connection: &mut Connection) -> Result<(), DatabaseError> {
+    const TEMPLATE_ID: &str = "copy_target_position.ctpd.cffex_index_futures.20260719";
+    const MIGRATION_KEY: &str = "ctpd_bbo_taker_configuration_v1";
+    let transaction = connection.transaction()?;
+    let already_migrated = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM app_meta WHERE key = ?1)",
+        [MIGRATION_KEY],
+        |row| row.get::<_, i64>(0).map(|value| value != 0),
+    )?;
+    if already_migrated {
+        return Ok(());
+    }
+    let mut statement = transaction
+        .prepare("SELECT id, params_json, signal_json FROM traders WHERE template_id = ?1")?;
+    let traders = statement
+        .query_map([TEMPLATE_ID], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+
+    for (id, params_json, signal_json) in traders {
+        let mut signal = serde_json::from_str::<Map<String, Value>>(&signal_json)?;
+        if signal.contains_key("net_volume") {
+            continue;
+        }
+        let target_long_volume = signal
+            .remove("target_long_volume")
+            .and_then(|value| value.as_i64())
+            .ok_or(DatabaseError::LegacyCtpdTraderConfiguration)?;
+        let target_short_volume = signal
+            .remove("target_short_volume")
+            .and_then(|value| value.as_i64())
+            .ok_or(DatabaseError::LegacyCtpdTraderConfiguration)?;
+        let net_volume = target_long_volume
+            .checked_sub(target_short_volume)
+            .and_then(|value| i32::try_from(value).ok())
+            .ok_or(DatabaseError::LegacyCtpdTraderConfiguration)?;
+        let mut params = serde_json::from_str::<Map<String, Value>>(&params_json)?;
+        params.remove("buy_price");
+        params.remove("sell_price");
+        transaction.execute(
+            "UPDATE traders SET params_json = ?2, signal_json = ?3, updated_at = ?4 WHERE id = ?1",
+            params![
+                id,
+                serde_json::to_string(&params)?,
+                serde_json::to_string(&serde_json::json!({"net_volume":net_volume}))?,
+                now()
+            ],
+        )?;
+    }
+    // COMPATIBILITY: this converts CTPD signals written before the BBO-taker release once.
+    // Remove it when pre-BBO-taker databases are no longer a supported upgrade source; verify
+    // every supported source has the app_meta marker before removal.
+    transaction.execute(
+        "INSERT INTO app_meta(key, value) VALUES (?1, 'complete')",
+        [MIGRATION_KEY],
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
 fn has_successful_runs_column(connection: &Connection) -> rusqlite::Result<bool> {
     connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('traders') WHERE name = 'successful_runs')",
@@ -807,6 +876,43 @@ mod tests {
         assert_eq!(updated.credential_id, credential.id);
         assert!(updated.enabled);
         assert_eq!(updated.status, "starting");
+        Ok(())
+    }
+
+    #[test]
+    fn opening_an_existing_database_migrates_ctpd_bbo_taker_configuration()
+    -> Result<(), Box<dyn Error>> {
+        let state_directory = tempdir()?;
+        let database = Database::open(state_directory.path())?;
+        let credential = database.create_credential("owner", "ctpd", "primary", &json!({}))?;
+        let (trader, _) = database.create_trader(&TraderDraft {
+            owner_id: "owner".into(),
+            name: "ctp".into(),
+            template_id: "copy_target_position.ctpd.cffex_index_futures.20260719".into(),
+            credential_id: credential.id,
+            params: json!({"instrument_id":"IF2609","buy_price":"4000","sell_price":"3999"}),
+            signal: json!({"target_long_volume":3,"target_short_volume":1}),
+            enabled: false,
+        })?;
+        database.connection()?.execute(
+            "DELETE FROM app_meta WHERE key = 'ctpd_bbo_taker_configuration_v1'",
+            [],
+        )?;
+        drop(database);
+
+        let database = Database::open(state_directory.path())?;
+        let trader = database
+            .get_trader(&trader.id)?
+            .expect("created trader exists");
+
+        assert_eq!(trader.params, json!({"instrument_id":"IF2609"}));
+        assert_eq!(trader.signal, json!({"net_volume":2}));
+        let migration_marker = database.connection()?.query_row(
+            "SELECT value FROM app_meta WHERE key = 'ctpd_bbo_taker_configuration_v1'",
+            [],
+            |row| row.get::<_, String>(0),
+        )?;
+        assert_eq!(migration_marker, "complete");
         Ok(())
     }
 

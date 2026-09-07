@@ -21,6 +21,9 @@ pub enum ExchangeApiError {
 
     #[error("exchange HTTP status {status}: {body}")]
     HttpStatus { status: u16, body: String },
+
+    #[error("exchange SSE stream closed before a data event")]
+    SseClosed,
 }
 
 pub type Result<T> = std::result::Result<T, ExchangeApiError>;

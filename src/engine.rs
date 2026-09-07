@@ -340,25 +340,22 @@ pub fn templates() -> Vec<Template> {
             description: "IF、IH、IC、IM 的昨仓优先平仓、对冲开仓和今仓平仓执行。",
             params_schema: object_schema(
                 "CTPD 中金所股指期货执行参数",
-                "HIT 根据所选交易凭证自动注入账户标识。",
-                &["instrument_id", "buy_price", "sell_price"],
+                "HIT 根据所选交易凭证自动注入账户标识。每笔实际委托前从 CTPD Tick 读取盘口：买入使用 AskPrice1，卖出使用 BidPrice1。",
+                &["instrument_id"],
                 json!({
                     "instrument_id": string_schema("合约", "中金所 IF、IH、IC 或 IM 股指期货合约，例如 IF2609。"),
-                    "buy_price": decimal_schema("买入限价", "开多或平空时使用的正数限价。"),
-                    "sell_price": decimal_schema("卖出限价", "开空或平多时使用的正数限价。"),
                 }),
             ),
             signal_schema: object_schema(
                 "CTPD 中金所股指期货目标信号",
-                "分别给出多头与空头目标手数。",
-                &["target_long_volume", "target_short_volume"],
+                "给出目标净头寸手数；正数为多头，负数为空头，0 为平仓。",
+                &["net_volume"],
                 json!({
-                    "target_long_volume": integer_schema("多头目标手数", "期望保留的非负多头手数。", 0),
-                    "target_short_volume": integer_schema("空头目标手数", "期望保留的非负空头手数。", 0),
+                    "net_volume": json!({"type":"integer","title":"目标净头寸手数","description":"期望的带符号净头寸；正数为多头，负数为空头，0 为平仓。","minimum":-2147483647,"maximum":2147483647}),
                 }),
             ),
-            params_example: json!({"instrument_id":"IF2609","buy_price":"4000","sell_price":"3999"}),
-            signal_example: json!({"target_long_volume":0,"target_short_volume":0}),
+            params_example: json!({"instrument_id":"IF2609"}),
+            signal_example: json!({"net_volume":0}),
         },
     ]
 }

@@ -23,6 +23,8 @@ HIT 不提供通用交易所抽象。Binance UM Futures、OKX Swap 与 CTPD 分�
 
 策略配置会在创建和外部更新信号时用原始 Rust 结构体反序列化校验。凭证类型必须和策略交易所匹配。
 
+CTPD 模板的 `params` 仅需要 `instrument_id`，目标信号仅需要带符号的 `net_volume`：正数为目标多头，负数为目标空头，`0` 为平仓。每笔实际委托前，HIT 都会从 CTPD 的 Tick（实时行情）流读取最新盘口；买入使用 `AskPrice1`，卖出使用 `BidPrice1`，即按最优对手价（BBO，最佳买卖报价）提交限价单。目标合约必须已在 CTPD 中启用 Tick 订阅；没有新 Tick 时 HIT 会等待，不会复用旧报价报单。
+
 ## 策略模板元信息
 
 `GET /api/templates` 返回所有可用策略模板。每个模板包含 `id`、`name`、`credential_type`、`description`、`params_schema` 和 `signal_schema`；后两项使用 JSON Schema（JSON 结构校验规范）描述可填写字段、必填项、标题和说明。创建交易者时，HIT 会根据所选凭证自动填入账户标识，因此它不属于 `params_schema` 的用户输入字段。

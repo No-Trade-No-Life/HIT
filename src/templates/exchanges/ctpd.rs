@@ -41,6 +41,15 @@ pub struct CtpdInstrument {
     pub max_limit_order_volume: i32,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct CtpdTick {
+    pub instrument_id: String,
+    pub bid_price_1: f64,
+    pub bid_volume_1: i32,
+    pub ask_price_1: f64,
+    pub ask_volume_1: i32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CtpdPlaceOrderRequest {
     pub instrument_id: String,
@@ -153,6 +162,44 @@ impl CtpdClient {
                 .await?,
         )
         .await
+    }
+
+    /// Waits for the next live CTPD Tick for one contract and returns its best bid and ask.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the SSE request fails, ends before a Tick, or contains invalid Tick JSON.
+    pub async fn next_tick(&self, instrument_id: &str) -> Result<CtpdTick> {
+        let mut response = self
+            .request(reqwest::Method::GET, "/v1/ticks")?
+            .query(&[("instrument_id", instrument_id)])
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(ExchangeApiError::HttpStatus {
+                status: status.as_u16(),
+                body: response.text().await?,
+            });
+        }
+
+        let mut buffer = Vec::new();
+        loop {
+            let Some(chunk) = response.chunk().await? else {
+                return Err(ExchangeApiError::SseClosed);
+            };
+            buffer.extend_from_slice(&chunk);
+            while let Some(frame_end) = buffer.windows(2).position(|window| window == b"\n\n") {
+                let frame = buffer.drain(..frame_end + 2).collect::<Vec<_>>();
+                let data = frame.split(|byte| *byte == b'\n').find_map(|line| {
+                    line.strip_prefix(b"data: ")
+                        .or_else(|| line.strip_prefix(b"data:"))
+                });
+                if let Some(data) = data {
+                    return Ok(serde_json::from_slice(data)?);
+                }
+            }
+        }
     }
 
     /// Calls CTPD `POST /v1/orders` with a caller-owned idempotency key.
