@@ -1,10 +1,10 @@
 import { toast } from "sonner"
 
-export function formatTime(timestamp?: number, locale?: string) {
+export function formatTime(timestamp?: number | null, locale?: string) {
   return timestamp ? new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "medium" }).format(new Date(timestamp * 1000)) : "—"
 }
 
-export function formatTimeAgo(timestamp?: number, locale?: string, referenceTime = Date.now()) {
+export function formatTimeAgo(timestamp?: number | null, locale?: string, referenceTime = Date.now()) {
   if (!timestamp) return "—"
   const relativeSeconds = Math.round(timestamp * 1000 - referenceTime) / 1000
   const [unit, seconds] = ([
