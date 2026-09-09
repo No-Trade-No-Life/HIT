@@ -307,9 +307,9 @@ impl Database {
     pub fn list_traders(&self, owner_id: Option<&str>) -> Result<Vec<Trader>, DatabaseError> {
         let connection = self.connection()?;
         let mut statement = if owner_id.is_some() {
-            connection.prepare("SELECT id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_prefix, enabled, status, last_run_at, last_signal_at, last_error, successful_runs, created_at, updated_at FROM traders WHERE owner_id = ?1 ORDER BY updated_at DESC")?
+            connection.prepare("SELECT id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_prefix, enabled, status, last_run_at, last_signal_at, last_error, successful_runs, created_at, updated_at FROM traders WHERE owner_id = ?1 ORDER BY created_at DESC, id DESC")?
         } else {
-            connection.prepare("SELECT id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_prefix, enabled, status, last_run_at, last_signal_at, last_error, successful_runs, created_at, updated_at FROM traders ORDER BY updated_at DESC")?
+            connection.prepare("SELECT id, owner_id, name, template_id, credential_id, params_json, signal_json, signal_token_prefix, enabled, status, last_run_at, last_signal_at, last_error, successful_runs, created_at, updated_at FROM traders ORDER BY created_at DESC, id DESC")?
         };
         let rows = match owner_id {
             Some(owner_id) => statement.query_map([owner_id], trader_from_row)?,
@@ -806,6 +806,48 @@ mod tests {
         assert_eq!(trader.status, "stopped");
         assert_eq!(trader.params, params);
         assert_eq!(trader.signal, signal);
+        Ok(())
+    }
+
+    #[test]
+    fn list_traders_orders_by_created_at_descending() -> Result<(), Box<dyn Error>> {
+        let state_directory = tempdir()?;
+        let database = Database::open(state_directory.path())?;
+        let credential = database.create_credential("owner", "binance", "primary", &json!({}))?;
+        let (older, _) = database.create_trader(&TraderDraft {
+            owner_id: "owner".into(),
+            name: "older".into(),
+            template_id: "template".into(),
+            credential_id: credential.id.clone(),
+            params: json!({}),
+            signal: json!({}),
+            enabled: false,
+        })?;
+        let (newer, _) = database.create_trader(&TraderDraft {
+            owner_id: "owner".into(),
+            name: "newer".into(),
+            template_id: "template".into(),
+            credential_id: credential.id,
+            params: json!({}),
+            signal: json!({}),
+            enabled: false,
+        })?;
+        let connection = database.connection()?;
+        connection.execute(
+            "UPDATE traders SET created_at = 1 WHERE id = ?1",
+            [&older.id],
+        )?;
+        connection.execute(
+            "UPDATE traders SET created_at = 2 WHERE id = ?1",
+            [&newer.id],
+        )?;
+        drop(connection);
+
+        let traders = database.list_traders(Some("owner"))?;
+        assert_eq!(
+            traders.iter().map(|trader| &trader.id).collect::<Vec<_>>(),
+            vec![&newer.id, &older.id]
+        );
         Ok(())
     }
 
