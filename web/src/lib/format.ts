@@ -1,7 +1,22 @@
 import { toast } from "sonner"
 
-export function formatTime(timestamp?: number) {
-  return timestamp ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" }).format(new Date(timestamp * 1000)) : "—"
+export function formatTime(timestamp?: number, locale?: string) {
+  return timestamp ? new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "medium" }).format(new Date(timestamp * 1000)) : "—"
+}
+
+export function formatTimeAgo(timestamp?: number, locale?: string, referenceTime = Date.now()) {
+  if (!timestamp) return "—"
+  const relativeSeconds = Math.round(timestamp * 1000 - referenceTime) / 1000
+  const [unit, seconds] = ([
+    ["year", 31_557_600],
+    ["month", 2_629_800],
+    ["week", 604_800],
+    ["day", 86_400],
+    ["hour", 3600],
+    ["minute", 60],
+    ["second", 1],
+  ] as const).find(([, duration]) => Math.abs(relativeSeconds) >= duration) ?? ["second", 1]
+  return new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(Math.round(relativeSeconds / seconds), unit)
 }
 
 export function formatBytes(bytes: number) {

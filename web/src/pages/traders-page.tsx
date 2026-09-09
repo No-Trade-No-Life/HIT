@@ -22,7 +22,7 @@ import { Textarea } from "@/components/ui/textarea"
 export function TradersPage({ token, t, onChanged }: { token: string; t: Copy; onChanged: () => void }) {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
-  const traders = useQuery({ queryKey: ["traders", token], queryFn: () => request<Trader[]>("/api/v1/traders", token) })
+  const traders = useQuery({ queryKey: ["traders", token], queryFn: () => request<Trader[]>("/api/v1/traders", token), refetchInterval: 15_000 })
   const credentials = useQuery({ queryKey: ["credentials", token], queryFn: () => request<Credential[]>("/api/v1/credentials", token) })
   const templates = useQuery({ queryKey: ["templates"], queryFn: () => fetch("/api/templates").then(response => response.json() as Promise<Template[]>) })
   if (traders.error) return <PageError error={traders.error} />
