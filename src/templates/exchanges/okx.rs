@@ -42,6 +42,12 @@ pub struct OkxAccountConfig {
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OkxAccountBalance {
+    pub total_eq: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OkxPosition {
     pub inst_id: String,
     pub inst_type: String,
@@ -126,6 +132,7 @@ pub struct OkxPendingOrder {
     pub px: String,
     pub sz: String,
     pub pos_side: String,
+    pub reduce_only: Option<String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -158,6 +165,7 @@ pub struct OkxInstrument {
     pub inst_id: String,
     pub lot_sz: String,
     pub min_sz: String,
+    pub ct_val: String,
 }
 
 impl OkxClient {
@@ -209,6 +217,15 @@ impl OkxClient {
         let query = format!("instType={inst_type}&instId={inst_id}");
         self.signed_get(&format!("/api/v5/account/positions?{query}"))
             .await
+    }
+
+    /// Calls `GET /api/v5/account/balance`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if signing, transport, or response decoding fails.
+    pub async fn get_account_balance(&self) -> Result<OkxResponse<Vec<OkxAccountBalance>>> {
+        self.signed_get("/api/v5/account/balance").await
     }
 
     /// Calls `POST /api/v5/trade/order`.

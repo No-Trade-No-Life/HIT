@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use crate::db::{Database, DatabaseError, Trader};
+use crate::db::{Database, DatabaseError, OkxSwapTargetLeverageState, Trader};
 use crate::templates as trader_templates;
 
 const RUN_INTERVAL: Duration = Duration::from_secs(1);
@@ -34,6 +34,7 @@ pub struct Template {
 const BINANCE_UM_FUTURES_CREDENTIAL: &str = "binance_um_futures.api_key_secret_v1";
 const OKX_CREDENTIAL: &str = "okx.api_key_secret_passphrase_v1";
 const CTPD_CREDENTIAL: &str = "ctpd.http_api_key_v1";
+const OKX_TARGET_LEVERAGE_TEMPLATE: &str = "target_leverage_bbo_post_only.okx.swap.20260910";
 
 fn object_schema(title: &str, description: &str, required: &[&str], properties: Value) -> Value {
     let mut schema = serde_json::Map::new();
@@ -248,6 +249,32 @@ pub fn templates() -> Vec<Template> {
             ),
             params_example: json!({"product_id":"BTC-USDT-SWAP","tolerance_qty":"1","max_order_qty":"10"}),
             signal_example: json!({"target_qty":"0"}),
+        },
+        Template {
+            id: OKX_TARGET_LEVERAGE_TEMPLATE,
+            name: "OKX Swap BBO Post-Only 目标杠杆",
+            credential_type: OKX_CREDENTIAL,
+            exchange: "okx",
+            description: "以账户净值计算一次目标杠杆张数；持仓后的净值漂移不再平衡，归零或反向后才重新计算。",
+            params_schema: object_schema(
+                "OKX Swap BBO Post-Only 目标杠杆执行参数",
+                "HIT 根据所选交易凭证自动注入账户标识；该策略要求 OKX net_mode，并且每个实例只管理一个永续合约。",
+                &["product_id"],
+                json!({
+                    "product_id": string_schema("合约", "OKX 永续合约标识，例如 BTC-USDT-SWAP。"),
+                    "broker_code": string_schema("经纪商代码", "可选。写入 OKX 订单 tag 的经纪商代码。"),
+                }),
+            ),
+            signal_schema: object_schema(
+                "OKX Swap 目标杠杆信号",
+                "带符号的目标杠杆，定义为仓位名义价值除以账户净值；正数做多，负数做空，0 为平仓。",
+                &["target_leverage"],
+                json!({
+                    "target_leverage": decimal_schema("目标杠杆", "仓位名义价值 / 账户净值；例如 1 为 1 倍做多，-1 为 1 倍做空，0 为平仓。"),
+                }),
+            ),
+            params_example: json!({"product_id":"BTC-USDT-SWAP"}),
+            signal_example: json!({"target_leverage":"1"}),
         },
         Template {
             id: "copy_target_position_bbo_maker_by_direction.okx.swap.20260605",
@@ -466,7 +493,21 @@ async fn execute(database: &Database, trader: &Trader) -> Result<String, String>
     if credential.exchange != expected_exchange {
         return Err("credential exchange does not match trader template".into());
     }
-    let config = merged_config(&trader.credential_id, &trader.params, &trader.signal)?;
+    let mut config = merged_config(&trader.credential_id, &trader.params, &trader.signal)?;
+    if trader.template_id == OKX_TARGET_LEVERAGE_TEMPLATE
+        && let Some(snapshot) = database
+            .okx_swap_target_leverage_state(&trader.id)
+            .map_err(|error| database_error(&error))?
+    {
+        let config = config
+            .as_object_mut()
+            .ok_or_else(|| "merged trader configuration must be an object".to_owned())?;
+        config.insert(
+            "snapshot".into(),
+            serde_json::to_value(snapshot)
+                .map_err(|error| format!("failed to encode target-leverage state: {error}"))?,
+        );
+    }
     let model: trader_templates::TraderModel =
         serde_json::from_value(json!({"model": trader.template_id, "config": config}))
             .map_err(|error| format!("template configuration is invalid: {error}"))?;
@@ -501,6 +542,26 @@ async fn execute(database: &Database, trader: &Trader) -> Result<String, String>
             trader_templates::run_okx_swap_copy_target_position_bbo_maker_once(&config, &credential)
                 .await
                 .map(|run| format!("{run:?}"))
+        }
+        trader_templates::TraderModel::OkxSwapTargetLeverageBboPostOnly20260910(config) => {
+            let run = trader_templates::run_okx_swap_target_leverage_bbo_post_only_once(
+                &config,
+                &credential,
+            )
+            .await
+            .map_err(|error| format!("execution failed: {error}"))?;
+            database
+                .put_okx_swap_target_leverage_state(
+                    &trader.id,
+                    &OkxSwapTargetLeverageState {
+                        account_id: run.snapshot.account_id.clone(),
+                        product_id: run.snapshot.product_id.clone(),
+                        target_leverage: run.snapshot.target_leverage.normalize().to_string(),
+                        target_qty: run.snapshot.target_qty.normalize().to_string(),
+                    },
+                )
+                .map_err(|error| database_error(&error))?;
+            return Ok(format!("{run:?}"));
         }
         trader_templates::TraderModel::OkxSwapCopyTargetPositionBboMakerByDirection20260605(config) => {
             trader_templates::run_okx_swap_copy_target_position_bbo_maker_by_direction_once(
@@ -587,7 +648,7 @@ mod tests {
     #[test]
     fn templates_expose_complete_documented_schemas() {
         let templates = templates();
-        assert_eq!(templates.len(), 9);
+        assert_eq!(templates.len(), 10);
         for template in templates {
             assert!(!template.id.is_empty());
             assert!(!template.name.is_empty());

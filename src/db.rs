@@ -77,6 +77,14 @@ pub struct SignalHistory {
     pub updated_at: i64,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OkxSwapTargetLeverageState {
+    pub account_id: String,
+    pub product_id: String,
+    pub target_leverage: String,
+    pub target_qty: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct LinkitSettings {
     pub owner_id: String,
@@ -156,6 +164,14 @@ impl Database {
                 updated_at INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS signal_history_trader_id_idx ON signal_history(trader_id, updated_at DESC);
+            CREATE TABLE IF NOT EXISTS okx_swap_target_leverage_states (
+                trader_id TEXT PRIMARY KEY NOT NULL REFERENCES traders(id) ON DELETE CASCADE,
+                account_id TEXT NOT NULL,
+                product_id TEXT NOT NULL,
+                target_leverage TEXT NOT NULL,
+                target_qty TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS linkit_settings (
                 owner_id TEXT PRIMARY KEY NOT NULL,
                 recipient_username TEXT NOT NULL,
@@ -507,6 +523,37 @@ impl Database {
         Ok(())
     }
 
+    pub fn okx_swap_target_leverage_state(
+        &self,
+        trader_id: &str,
+    ) -> Result<Option<OkxSwapTargetLeverageState>, DatabaseError> {
+        self.connection()?
+            .query_row(
+                "SELECT account_id, product_id, target_leverage, target_qty FROM okx_swap_target_leverage_states WHERE trader_id = ?1",
+                [trader_id],
+                |row| Ok(OkxSwapTargetLeverageState {
+                    account_id: row.get(0)?,
+                    product_id: row.get(1)?,
+                    target_leverage: row.get(2)?,
+                    target_qty: row.get(3)?,
+                }),
+            )
+            .optional()
+            .map_err(DatabaseError::Sqlite)
+    }
+
+    pub fn put_okx_swap_target_leverage_state(
+        &self,
+        trader_id: &str,
+        state: &OkxSwapTargetLeverageState,
+    ) -> Result<(), DatabaseError> {
+        self.connection()?.execute(
+            "INSERT INTO okx_swap_target_leverage_states(trader_id, account_id, product_id, target_leverage, target_qty, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(trader_id) DO UPDATE SET account_id = excluded.account_id, product_id = excluded.product_id, target_leverage = excluded.target_leverage, target_qty = excluded.target_qty, updated_at = excluded.updated_at",
+            params![trader_id, state.account_id, state.product_id, state.target_leverage, state.target_qty, now()],
+        )?;
+        Ok(())
+    }
+
     pub fn list_signal_history(
         &self,
         trader_id: &str,
@@ -772,7 +819,7 @@ mod tests {
     use serde_json::json;
     use tempfile::tempdir;
 
-    use super::{Database, TraderDraft};
+    use super::{Database, OkxSwapTargetLeverageState, TraderDraft};
 
     #[test]
     fn set_trader_enabled_preserves_trader_configuration() -> Result<(), Box<dyn Error>> {
@@ -848,6 +895,38 @@ mod tests {
             traders.iter().map(|trader| &trader.id).collect::<Vec<_>>(),
             vec![&newer.id, &older.id]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn okx_target_leverage_state_is_durable_and_deleted_with_trader() -> Result<(), Box<dyn Error>>
+    {
+        let state_directory = tempdir()?;
+        let database = Database::open(state_directory.path())?;
+        let credential = database.create_credential("owner", "okx", "primary", &json!({}))?;
+        let (trader, _) = database.create_trader(&TraderDraft {
+            owner_id: "owner".into(),
+            name: "BTC leverage".into(),
+            template_id: "target_leverage_bbo_post_only.okx.swap.20260910".into(),
+            credential_id: credential.id,
+            params: json!({"product_id":"BTC-USDT-SWAP"}),
+            signal: json!({"target_leverage":"1"}),
+            enabled: false,
+        })?;
+        let state = OkxSwapTargetLeverageState {
+            account_id: trader.credential_id.clone(),
+            product_id: "BTC-USDT-SWAP".into(),
+            target_leverage: "1".into(),
+            target_qty: "2000".into(),
+        };
+
+        database.put_okx_swap_target_leverage_state(&trader.id, &state)?;
+        assert_eq!(
+            database.okx_swap_target_leverage_state(&trader.id)?,
+            Some(state)
+        );
+        assert!(database.delete_trader(&trader.id)?);
+        assert_eq!(database.okx_swap_target_leverage_state(&trader.id)?, None);
         Ok(())
     }
 
