@@ -30,6 +30,18 @@ export function formatBytes(bytes: number) {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`
 }
 
+export function formatPayload(payload: Record<string, unknown>) {
+  const entries = Object.entries(payload)
+  if (!entries.length) return "—"
+  return entries.map(([key, value]) => `${key}: ${formatPayloadValue(value)}`).join(" · ")
+}
+
+function formatPayloadValue(value: unknown) {
+  if (value === null) return "null"
+  if (typeof value === "object") return JSON.stringify(value)
+  return String(value)
+}
+
 export function showError(error: Error) {
   toast.error(error.message)
 }
