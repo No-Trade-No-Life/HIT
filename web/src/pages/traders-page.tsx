@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { ChevronLeftIcon, ChevronRightIcon, CircleAlertIcon, KeyRoundIcon, PlusIcon, RotateCcwIcon, WorkflowIcon } from "lucide-react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { request } from "../lib/api"
@@ -24,6 +24,7 @@ type SignalFilter = "all" | "received" | "missing"
 type TraderSort = "created-desc" | "created-asc" | "signal-desc" | "signal-asc" | "name-asc"
 
 const pageSizes = [10, 25, 50] as const
+const defaultTraderSort: TraderSort = "name-asc"
 
 export function TradersPage({ token, t, onChanged }: { token: string; t: Copy; onChanged: () => void }) {
   const navigate = useNavigate()
@@ -40,12 +41,13 @@ export function TradersPage({ token, t, onChanged }: { token: string; t: Copy; o
 }
 
 function TraderList({ t, token, traders, onSelect, onChanged }: { t: Copy; token: string; traders: Trader[]; onSelect: (id: string) => void; onChanged: () => void }) {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [query, setQuery] = useState("")
   const [status, setStatus] = useState<TraderStatusFilter>("all")
   const [signal, setSignal] = useState<SignalFilter>("all")
-  const [sort, setSort] = useState<TraderSort>("created-desc")
   const [pageSize, setPageSize] = useState<(typeof pageSizes)[number]>(pageSizes[0])
   const [page, setPage] = useState(1)
+  const sort = parseTraderSort(searchParams.get("sort"))
   const locale = localeText(t, "en", "zh-CN")
   const filteredTraders = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase(locale)
@@ -61,10 +63,20 @@ function TraderList({ t, token, traders, onSelect, onChanged }: { t: Copy; token
   const firstItem = filteredTraders.length ? (currentPage - 1) * pageSize + 1 : 0
   const pageTraders = filteredTraders.slice(firstItem - 1, firstItem - 1 + pageSize)
   const lastItem = firstItem + pageTraders.length - 1
-  const controlsAreDefault = !query && status === "all" && signal === "all" && sort === "created-desc" && pageSize === pageSizes[0]
-  const resetControls = () => { setQuery(""); setStatus("all"); setSignal("all"); setSort("created-desc"); setPageSize(pageSizes[0]); setPage(1) }
+  const controlsAreDefault = !query && status === "all" && signal === "all" && sort === defaultTraderSort && pageSize === pageSizes[0]
+  const setSort = (value: TraderSort) => {
+    const next = new URLSearchParams(searchParams)
+    next.set("sort", value)
+    setSearchParams(next, { replace: true })
+    setPage(1)
+  }
+  const resetControls = () => { setQuery(""); setStatus("all"); setSignal("all"); setSort(defaultTraderSort); setPageSize(pageSizes[0]); setPage(1) }
 
   return <div className="flex flex-col gap-5"><form onSubmit={event => event.preventDefault()}><FieldGroup className="!flex-row flex-wrap items-end !gap-3"><Field className="!w-auto min-w-56 flex-1"><FieldLabel htmlFor="trader-search">{localeText(t, "Search", "搜索")}</FieldLabel><Input id="trader-search" value={query} onChange={event => { setQuery(event.target.value); setPage(1) }} placeholder={localeText(t, "Name or strategy template", "名称或策略模板")} /></Field><Field className="!w-auto min-w-32"><FieldLabel htmlFor="trader-status-filter">{t.status}</FieldLabel><Select value={status} onValueChange={value => { setStatus(value as TraderStatusFilter); setPage(1) }}><SelectTrigger id="trader-status-filter" className="!w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">{localeText(t, "All statuses", "全部状态")}</SelectItem><SelectItem value="running">{t.enabled}</SelectItem><SelectItem value="stopped">{t.stopped}</SelectItem><SelectItem value="failed">{t.failed}</SelectItem></SelectGroup></SelectContent></Select></Field><Field className="!w-auto min-w-40"><FieldLabel htmlFor="trader-signal-filter">{localeText(t, "External signal", "外部信号")}</FieldLabel><Select value={signal} onValueChange={value => { setSignal(value as SignalFilter); setPage(1) }}><SelectTrigger id="trader-signal-filter" className="!w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">{localeText(t, "All signals", "全部信号")}</SelectItem><SelectItem value="received">{localeText(t, "Received", "已接收")}</SelectItem><SelectItem value="missing">{localeText(t, "Not received", "未接收")}</SelectItem></SelectGroup></SelectContent></Select></Field><Field className="!w-auto min-w-52"><FieldLabel htmlFor="trader-sort">{localeText(t, "Sort", "排序")}</FieldLabel><Select value={sort} onValueChange={value => { setSort(value as TraderSort); setPage(1) }}><SelectTrigger id="trader-sort" className="!w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="created-desc">{localeText(t, "Created: newest first", "创建时间：最新优先")}</SelectItem><SelectItem value="created-asc">{localeText(t, "Created: oldest first", "创建时间：最早优先")}</SelectItem><SelectItem value="signal-desc">{localeText(t, "Last signal: newest first", "最后接收信号：最新优先")}</SelectItem><SelectItem value="signal-asc">{localeText(t, "Last signal: oldest first", "最后接收信号：最早优先")}</SelectItem><SelectItem value="name-asc">{localeText(t, "Name: A to Z", "名称：A 到 Z")}</SelectItem></SelectGroup></SelectContent></Select></Field><Field className="!w-auto min-w-28"><FieldLabel htmlFor="trader-page-size">{localeText(t, "Per page", "每页")}</FieldLabel><Select value={String(pageSize)} onValueChange={value => { setPageSize(Number(value) as (typeof pageSizes)[number]); setPage(1) }}><SelectTrigger id="trader-page-size" className="!w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{pageSizes.map(size => <SelectItem value={String(size)} key={size}>{size}</SelectItem>)}</SelectGroup></SelectContent></Select></Field><Button type="button" variant="ghost" size="sm" onClick={resetControls} disabled={controlsAreDefault}><RotateCcwIcon data-icon="inline-start" />{localeText(t, "Reset", "重置")}</Button></FieldGroup></form>{filteredTraders.length ? <><TraderTable t={t} token={token} traders={pageTraders} onSelect={onSelect} onChanged={onChanged} /><nav className="flex flex-wrap items-center justify-between gap-3" aria-label={localeText(t, "Trader list pagination", "交易者列表分页")}><p className="text-sm text-muted-foreground">{localeText(t, `Showing ${firstItem}-${lastItem} of ${filteredTraders.length}`, `显示第 ${firstItem}-${lastItem} 项，共 ${filteredTraders.length} 项`)}</p><div className="flex items-center gap-2"><Button type="button" variant="outline" size="sm" onClick={() => setPage(currentPage - 1)} disabled={currentPage === 1}><ChevronLeftIcon data-icon="inline-start" />{localeText(t, "Previous", "上一页")}</Button><span className="text-sm tabular-nums text-muted-foreground">{localeText(t, `Page ${currentPage} of ${pageCount}`, `第 ${currentPage} / ${pageCount} 页`)}</span><Button type="button" variant="outline" size="sm" onClick={() => setPage(currentPage + 1)} disabled={currentPage === pageCount}>{localeText(t, "Next", "下一页")}<ChevronRightIcon data-icon="inline-end" /></Button></div></nav></> : <EmptyState title={localeText(t, "No matching traders", "没有匹配的交易者")} description={localeText(t, "Adjust the filters or reset them to see every trader.", "请调整筛选条件，或重置以查看全部交易者。")} icon={WorkflowIcon} />}</div>
+}
+
+function parseTraderSort(value: string | null): TraderSort {
+  return value === "created-desc" || value === "created-asc" || value === "signal-desc" || value === "signal-asc" || value === "name-asc" ? value : defaultTraderSort
 }
 
 function traderDisplayStatus(trader: Trader): Exclude<TraderStatusFilter, "all"> {
