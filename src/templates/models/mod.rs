@@ -7,6 +7,7 @@ mod okx_swap_copy_target_position_bbo_maker_by_direction_singleflight_20260609;
 mod okx_swap_copy_target_position_multi_order_maker_20260605;
 mod okx_swap_copy_target_position_multi_order_maker_by_direction_20260605;
 mod okx_swap_copy_target_position_v1;
+mod okx_swap_quantized_net_position_bbo_post_only_20260911;
 mod okx_swap_target_leverage_bbo_post_only_20260910;
 
 use rust_decimal::Decimal;
@@ -82,6 +83,11 @@ pub use okx_swap_copy_target_position_v1::{
     plan_okx_swap_copy_target_position_adjustment, run_okx_swap_copy_target_position_once,
     run_okx_swap_copy_target_position_once_with_client,
 };
+pub use okx_swap_quantized_net_position_bbo_post_only_20260911::{
+    OkxSwapQuantizedNetPositionBboPostOnlyConfig, OkxSwapQuantizedNetPositionBboPostOnlyRun,
+    run_okx_swap_quantized_net_position_bbo_post_only_once,
+    run_okx_swap_quantized_net_position_bbo_post_only_once_with_client,
+};
 pub use okx_swap_target_leverage_bbo_post_only_20260910::{
     OkxSwapTargetLeverageBboPostOnlyConfig, OkxSwapTargetLeverageBboPostOnlyRun,
     OkxSwapTargetLeverageSnapshot, run_okx_swap_target_leverage_bbo_post_only_once,
@@ -142,6 +148,27 @@ pub enum TraderRunError {
         product_id: String,
         quantity: Decimal,
         minimum_size: Decimal,
+    },
+
+    #[error("OKX quantized net-position trader for {product_id} has an invalid lot size")]
+    OkxQuantizedInvalidLotSize { product_id: String },
+
+    #[error(
+        "OKX quantized net-position order for {product_id} has quantity {quantity}, below minimum {minimum_size}"
+    )]
+    OkxQuantizedBelowMinimum {
+        product_id: String,
+        quantity: Decimal,
+        minimum_size: Decimal,
+    },
+
+    #[error(
+        "OKX quantized net-position order for {product_id} has quantity {quantity}, not a multiple of lot size {lot_size}"
+    )]
+    OkxQuantizedNotLotMultiple {
+        product_id: String,
+        quantity: Decimal,
+        lot_size: Decimal,
     },
 
     #[error("Binance UM Futures account must be in Hedge Mode")]
@@ -236,6 +263,9 @@ pub enum TraderModel {
 
     #[serde(rename = "target_leverage_bbo_post_only.okx.swap.20260910")]
     OkxSwapTargetLeverageBboPostOnly20260910(OkxSwapTargetLeverageBboPostOnlyConfig),
+
+    #[serde(rename = "quantized_net_position_bbo_post_only.okx.swap.20260911")]
+    OkxSwapQuantizedNetPositionBboPostOnly20260911(OkxSwapQuantizedNetPositionBboPostOnlyConfig),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]

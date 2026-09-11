@@ -35,6 +35,8 @@ const BINANCE_UM_FUTURES_CREDENTIAL: &str = "binance_um_futures.api_key_secret_v
 const OKX_CREDENTIAL: &str = "okx.api_key_secret_passphrase_v1";
 const CTPD_CREDENTIAL: &str = "ctpd.http_api_key_v1";
 const OKX_TARGET_LEVERAGE_TEMPLATE: &str = "target_leverage_bbo_post_only.okx.swap.20260910";
+const OKX_QUANTIZED_NET_POSITION_TEMPLATE: &str =
+    "quantized_net_position_bbo_post_only.okx.swap.20260911";
 
 fn object_schema(title: &str, description: &str, required: &[&str], properties: Value) -> Value {
     let mut schema = serde_json::Map::new();
@@ -277,6 +279,34 @@ pub fn templates() -> Vec<Template> {
             signal_example: json!({"target_leverage":"1"}),
         },
         Template {
+            id: OKX_QUANTIZED_NET_POSITION_TEMPLATE,
+            name: "OKX Swap BBO Post-Only 整数净头寸",
+            credential_type: OKX_CREDENTIAL,
+            exchange: "okx",
+            description: "以整数净头寸信号乘以执行参数中的手数倍数，使用 BBO post-only 订单调整永续合约仓位。",
+            params_schema: object_schema(
+                "OKX Swap BBO Post-Only 整数净头寸执行参数",
+                "HIT 根据所选交易凭证自动注入账户标识；该策略要求 OKX net_mode，并且每个实例只管理一个永续合约。",
+                &["product_id", "max_abs_signal", "volume_multiplier"],
+                json!({
+                    "product_id": string_schema("合约", "OKX 永续合约标识，例如 BTC-USDT-SWAP。"),
+                    "max_abs_signal": integer_schema("信号最大绝对值", "限制 net_position 信号的最大绝对值；超出时信号会被拒绝。", 1),
+                    "volume_multiplier": integer_schema("手数倍数", "每 1 个 net_position 信号单位对应的实际下单手数；实际目标手数 = 手数倍数 × net_position。", 1),
+                    "broker_code": string_schema("经纪商代码", "可选。写入 OKX 订单 tag 的经纪商代码。"),
+                }),
+            ),
+            signal_schema: object_schema(
+                "OKX Swap 整数净头寸信号",
+                "只接受带符号的 JSON 整数 net_position；正数为多头，负数为空头，0 为平仓。其绝对值不得超过执行参数 max_abs_signal。",
+                &["net_position"],
+                json!({
+                    "net_position": {"type":"integer","title":"净头寸","description":"带符号的整数净头寸；正数为多头，负数为空头，0 为平仓。最大绝对值由执行参数 max_abs_signal 限制。","minimum":-2147483648,"maximum":2147483647},
+                }),
+            ),
+            params_example: json!({"product_id":"BTC-USDT-SWAP","max_abs_signal":3,"volume_multiplier":10}),
+            signal_example: json!({"net_position":0}),
+        },
+        Template {
             id: "copy_target_position_bbo_maker_by_direction.okx.swap.20260605",
             name: "OKX Swap BBO 分方向挂单",
             credential_type: OKX_CREDENTIAL,
@@ -461,6 +491,29 @@ pub fn validate_configuration(
     let Some(_) = template(template_id) else {
         return Err("unknown trader template".into());
     };
+    if template_id == OKX_QUANTIZED_NET_POSITION_TEMPLATE {
+        let Some(params) = params.as_object() else {
+            return Err("params must be a JSON object".into());
+        };
+        let allowed_params = [
+            "product_id",
+            "max_abs_signal",
+            "volume_multiplier",
+            "broker_code",
+        ];
+        if params
+            .keys()
+            .any(|key| !allowed_params.contains(&key.as_str()))
+        {
+            return Err("quantized trader params contain an unsupported field".into());
+        }
+        let Some(signal) = signal.as_object() else {
+            return Err("signal must be a JSON object".into());
+        };
+        if signal.len() != 1 || !signal.contains_key("net_position") {
+            return Err("quantized trader signal must contain only net_position".into());
+        }
+    }
     let config = merged_config(credential_id, params, signal)?;
     serde_json::from_value::<trader_templates::TraderModel>(
         json!({"model": template_id, "config": config}),
@@ -563,6 +616,14 @@ async fn execute(database: &Database, trader: &Trader) -> Result<String, String>
                 .map_err(|error| database_error(&error))?;
             return Ok(format!("{run:?}"));
         }
+        trader_templates::TraderModel::OkxSwapQuantizedNetPositionBboPostOnly20260911(config) => {
+            trader_templates::run_okx_swap_quantized_net_position_bbo_post_only_once(
+                &config,
+                &credential,
+            )
+            .await
+            .map(|run| format!("{run:?}"))
+        }
         trader_templates::TraderModel::OkxSwapCopyTargetPositionBboMakerByDirection20260605(config) => {
             trader_templates::run_okx_swap_copy_target_position_bbo_maker_by_direction_once(
                 &config,
@@ -624,7 +685,7 @@ fn database_error(error: &DatabaseError) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{templates, validate_configuration};
+    use super::{OKX_QUANTIZED_NET_POSITION_TEMPLATE, templates, validate_configuration};
     use serde_json::json;
 
     #[test]
@@ -641,6 +702,42 @@ mod tests {
     }
 
     #[test]
+    fn quantized_signal_validation_is_bounded_and_shape_specific() {
+        let params = json!({
+            "product_id": "BTC-USDT-SWAP",
+            "max_abs_signal": 3,
+            "volume_multiplier": 10,
+        });
+        assert!(
+            validate_configuration(
+                OKX_QUANTIZED_NET_POSITION_TEMPLATE,
+                "credential-id",
+                &params,
+                &json!({"net_position": 3}),
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_configuration(
+                OKX_QUANTIZED_NET_POSITION_TEMPLATE,
+                "credential-id",
+                &params,
+                &json!({"net_position": 4}),
+            )
+            .is_err()
+        );
+        assert!(
+            validate_configuration(
+                OKX_QUANTIZED_NET_POSITION_TEMPLATE,
+                "credential-id",
+                &params,
+                &json!({"net_position": 2, "product_id": "ETH-USDT-SWAP"}),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn rejects_unknown_template() {
         assert!(validate_configuration("nope", "credential-id", &json!({}), &json!({})).is_err());
     }
@@ -648,7 +745,7 @@ mod tests {
     #[test]
     fn templates_expose_complete_documented_schemas() {
         let templates = templates();
-        assert_eq!(templates.len(), 10);
+        assert_eq!(templates.len(), 11);
         for template in templates {
             assert!(!template.id.is_empty());
             assert!(!template.name.is_empty());

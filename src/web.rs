@@ -766,7 +766,7 @@ mod tests {
     async fn template_endpoint_returns_complete_schema_metadata() {
         let Json(templates) = list_templates().await;
 
-        assert_eq!(templates.len(), 10);
+        assert_eq!(templates.len(), 11);
         for template in templates {
             let document = serde_json::to_value(template).expect("template serializes");
             for field in [
