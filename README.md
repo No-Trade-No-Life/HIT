@@ -18,7 +18,7 @@ HIT 不提供通用交易所抽象。Binance UM Futures、OKX Swap 与 CTPD 分�
 第一版包含来自 `traders` 的所有当前模板，至少覆盖：
 
 - Binance UM Futures：目标仓位、BBO 分方向挂单；
-- OKX Swap：目标仓位、BBO、分方向、singleflight、多笔 maker，以及目标杠杆 BBO post-only；
+- OKX Swap：目标仓位、BBO、分方向、singleflight、多笔 maker、目标杠杆 BBO post-only，以及整数净头寸 BBO post-only；
 - CTPD：中金所 IF/IH/IC/IM 股指期货昨仓优先对冲执行。
 
 策略配置会在创建和外部更新信号时用原始 Rust 结构体反序列化校验。凭证类型必须和策略交易所匹配。
@@ -26,6 +26,8 @@ HIT 不提供通用交易所抽象。Binance UM Futures、OKX Swap 与 CTPD 分�
 CTPD 模板的 `params` 仅需要 `instrument_id`，目标信号仅需要带符号的 `net_volume`：正数为目标多头，负数为目标空头，`0` 为平仓。每笔实际委托前，HIT 都会从 CTPD 的 Tick（实时行情）流读取最新盘口；买入使用 `AskPrice1`，卖出使用 `BidPrice1`，即按最优对手价（BBO，最佳买卖报价）提交限价单。目标合约必须已在 CTPD 中启用 Tick 订阅；没有新 Tick 时 HIT 会等待，不会复用旧报价报单。
 
 OKX Swap 目标杠杆模板要求 `net_mode`。其 `signal.target_leverage` 是带方向的杠杆：仓位名义价值 / OKX `totalEq`（账户净值），例如 `1` 为 1 倍做多、`-1` 为 1 倍做空、`0` 为平仓。它使用 BBO 的 post-only（只挂单）限价单。开仓、显式 signal 改变、归零或反向后，HIT 会读取当时净值、合约面值和 BBO 来计算目标张数；持仓期间仅因 PnL 导致的净值或实际杠杆变化不会触发调仓。反向会先 BBO post-only 平仓，确认归零后才按最新净值开反向仓。
+
+OKX Swap 整数净头寸模板要求 `net_mode`，每个实例管理一个合约。执行参数需要 `max_abs_signal`（信号允许的最大绝对值）和 `volume_multiplier`（每个信号单位对应的实际手数）；外部信号使用 `{"net_position":整数}`，例如 `-3`、`0`、`3`。实际目标手数严格等于 `volume_multiplier × net_position`，负数做空，正数做多，`0` 平仓；超出 `max_abs_signal`、不是整数或包含其他字段的 signal 会被拒绝。策略使用对应方向的 BBO 价格提交 post-only 限价单，反向时先用 reduce-only（只减仓）订单平仓，再在下一轮开反向仓。实际订单数量还必须符合 OKX 合约的最小手数和手数步长。
 
 ## 策略模板元信息
 
