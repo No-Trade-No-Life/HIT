@@ -14,3 +14,12 @@ export function localeText(t: Copy, english: string, chinese: string) {
 export function initialLocale(): Locale {
   return navigator.language.startsWith("zh") ? "zh" : "en"
 }
+
+export function negotiateLocale(languages: readonly string[]): Locale | undefined {
+  for (const language of languages) {
+    const base = language.toLowerCase().split("-")[0]
+    if (base === "zh") return "zh"
+    if (base === "en") return "en"
+  }
+  return undefined
+}
