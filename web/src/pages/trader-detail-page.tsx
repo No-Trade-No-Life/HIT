@@ -4,7 +4,7 @@ import { CircleAlertIcon, CopyIcon, HistoryIcon, KeyRoundIcon, PencilIcon } from
 import { useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
-import { request } from "../lib/api"
+import { request, type AuthSdk } from "../lib/api"
 import { formatTime, showError } from "../lib/format"
 import { localeText, type Copy } from "../lib/i18n"
 import type { JsonSchema, SignalHistory, Template, Trader } from "../lib/types"
@@ -21,12 +21,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 
-export function TraderDetailPage({ token, t, onChanged }: { token: string; t: Copy; onChanged: () => void }) {
+export function TraderDetailPage({ auth, t, onChanged }: { auth: AuthSdk; t: Copy; onChanged: () => void }) {
   const navigate = useNavigate()
   const { traderId } = useParams()
-  const trader = useQuery({ queryKey: ["trader", traderId, token], queryFn: () => request<Trader>(`/api/v1/traders/${traderId}`, token), enabled: Boolean(traderId) })
-  const signalHistory = useQuery({ queryKey: ["signal-history", traderId, token], queryFn: () => request<SignalHistory[]>(`/api/v1/traders/${traderId}/signal-history`, token), enabled: Boolean(traderId), refetchInterval: 10_000 })
-  const templates = useQuery({ queryKey: ["templates", token], queryFn: () => request<Template[]>("/api/templates", token) })
+  const trader = useQuery({ queryKey: ["trader", traderId], queryFn: () => request<Trader>(`/api/v1/traders/${traderId}`, auth), enabled: Boolean(traderId) })
+  const signalHistory = useQuery({ queryKey: ["signal-history", traderId], queryFn: () => request<SignalHistory[]>(`/api/v1/traders/${traderId}/signal-history`, auth), enabled: Boolean(traderId), refetchInterval: 10_000 })
+  const templates = useQuery({ queryKey: ["templates"], queryFn: () => request<Template[]>("/api/templates", auth) })
   if (!traderId) return null
   if (trader.isPending) return <Skeleton className="h-72" />
   if (trader.error) return <PageError error={trader.error} />
@@ -39,24 +39,24 @@ export function TraderDetailPage({ token, t, onChanged }: { token: string; t: Co
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div>
         <Button variant="ghost" size="sm" onClick={() => navigate("/traders")}>← {t.traders}</Button>
-        <TraderNameEditor trader={value} token={token} t={t} onSaved={refresh} />
+        <TraderNameEditor trader={value} auth={auth} t={t} onSaved={refresh} />
         <p className="mt-1 font-mono text-xs text-muted-foreground">{value.id}</p>
       </div>
-      <div className="flex items-center gap-3"><StatusBadge trader={value} t={t} /><TraderEnabledSwitch trader={value} token={token} t={t} onChanged={onChanged} /></div>
+      <div className="flex items-center gap-3"><StatusBadge trader={value} t={t} /><TraderEnabledSwitch trader={value} auth={auth} t={t} onChanged={onChanged} /></div>
     </div>
     {value.last_error && <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{t.failed}</AlertTitle><AlertDescription>{value.last_error}</AlertDescription></Alert>}
-    <div className="grid gap-4 lg:grid-cols-2"><ParamsCard key={JSON.stringify(value.params)} trader={value} schema={template?.params_schema} token={token} t={t} onSaved={refresh} /><SignalCard key={JSON.stringify(value.signal)} trader={value} schema={template?.signal_schema} token={token} t={t} onSaved={refresh} /></div>
-    <SignalIntegrationCard trader={value} template={template} token={token} t={t} />
+    <div className="grid gap-4 lg:grid-cols-2"><ParamsCard key={JSON.stringify(value.params)} trader={value} schema={template?.params_schema} auth={auth} t={t} onSaved={refresh} /><SignalCard key={JSON.stringify(value.signal)} trader={value} schema={template?.signal_schema} auth={auth} t={t} onSaved={refresh} /></div>
+    <SignalIntegrationCard trader={value} template={template} auth={auth} t={t} />
     <Card><CardHeader><CardTitle>{t.signalHistory}</CardTitle><CardDescription>{t.signalHistoryDescription}</CardDescription></CardHeader><CardContent>{signalHistory.data?.length ? <Table><TableHeader><TableRow><TableHead>{t.signalPayload}</TableHead><TableHead>{t.occurrences}</TableHead><TableHead>{t.firstSeen}</TableHead><TableHead>{t.updated}</TableHead></TableRow></TableHeader><TableBody>{signalHistory.data.map(entry => <TableRow key={entry.id}><TableCell className="min-w-64 align-top"><JsonBlock value={entry.signal} /></TableCell><TableCell><Badge variant="secondary">{entry.occurrences}</Badge></TableCell><TableCell className="whitespace-nowrap text-muted-foreground">{formatTime(entry.created_at)}</TableCell><TableCell className="whitespace-nowrap text-muted-foreground">{formatTime(entry.updated_at)}</TableCell></TableRow>)}</TableBody></Table> : <EmptyState title={t.signalHistory} description={t.signalHistoryDescription} icon={HistoryIcon} />}</CardContent></Card>
   </div>
 }
 
-function TraderNameEditor({ trader, token, t, onSaved }: { trader: Trader; token: string; t: Copy; onSaved: () => void }) {
+function TraderNameEditor({ trader, auth, t, onSaved }: { trader: Trader; auth: AuthSdk; t: Copy; onSaved: () => void }) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(trader.name)
   const [error, setError] = useState<string | null>(null)
   const save = useMutation({
-    mutationFn: () => request<Trader>(`/api/v1/traders/${trader.id}/name`, token, { method: "PATCH", body: JSON.stringify({ name }) }),
+    mutationFn: () => request<Trader>(`/api/v1/traders/${trader.id}/name`, auth, { method: "PATCH", body: JSON.stringify({ name }) }),
     onSuccess: () => { toast.success(t.traderNameSaved); setEditing(false); onSaved() },
     onError: (requestError: Error) => { setError(requestError.message); showError(requestError) },
   })
@@ -64,13 +64,13 @@ function TraderNameEditor({ trader, token, t, onSaved }: { trader: Trader; token
   return <form className="mt-2" onSubmit={event => { event.preventDefault(); setError(null); save.mutate() }}><FieldGroup><Field data-invalid={Boolean(error)}><FieldLabel htmlFor={`trader-name-${trader.id}`}>{t.traderName}</FieldLabel><div className="flex flex-wrap items-center gap-2"><Input id={`trader-name-${trader.id}`} value={name} onChange={event => setName(event.target.value)} disabled={save.isPending} required /><Button type="submit" disabled={save.isPending}>{save.isPending ? t.saving : t.save}</Button><Button type="button" variant="outline" onClick={() => { setName(trader.name); setError(null); setEditing(false) }} disabled={save.isPending}>{t.cancel}</Button></div><FieldError>{error}</FieldError></Field></FieldGroup></form>
 }
 
-function ParamsCard({ trader, schema, token, t, onSaved }: { trader: Trader; schema?: JsonSchema; token: string; t: Copy; onSaved: () => void }) {
+function ParamsCard({ trader, schema, auth, t, onSaved }: { trader: Trader; schema?: JsonSchema; auth: AuthSdk; t: Copy; onSaved: () => void }) {
   const [payload, setPayload] = useState(() => JSON.stringify(trader.params, null, 2))
   const [error, setError] = useState<string | null>(null)
   const save = useMutation({
     mutationFn: (serialized: string) => {
       const params = parseObject(serialized, t.paramsJsonInvalid, t.paramsJsonObject)
-      return request<Trader>(`/api/v1/traders/${trader.id}/params`, token, { method: "PATCH", body: JSON.stringify({ params }) })
+      return request<Trader>(`/api/v1/traders/${trader.id}/params`, auth, { method: "PATCH", body: JSON.stringify({ params }) })
     },
     onSuccess: () => { toast.success(t.paramsSaved); onSaved() },
     onError: (requestError: Error) => { setError(requestError.message); showError(requestError) },
@@ -80,13 +80,13 @@ function ParamsCard({ trader, schema, token, t, onSaved }: { trader: Trader; sch
   return <Card><CardHeader><CardTitle>{t.manualParams}</CardTitle><CardDescription>{t.manualParamsDescription}</CardDescription></CardHeader><CardContent className="flex flex-col gap-4">{trader.enabled && <Alert><CircleAlertIcon /><AlertTitle>{t.manualParamsRiskTitle}</AlertTitle><AlertDescription>{t.manualParamsRisk}</AlertDescription></Alert>}<div className="flex items-center justify-between border-b pb-3 text-sm"><span className="text-muted-foreground">{t.successfulRuns}</span><span className="font-mono tabular-nums">{trader.successful_runs}</span></div><Tabs defaultValue="structured"><TabsList><TabsTrigger value="structured">{t.structured}</TabsTrigger><TabsTrigger value="json">JSON</TabsTrigger></TabsList><TabsContent value="structured"><SchemaValueList schema={schema} value={trader.params} /></TabsContent><JsonEditorTab id={`params-payload-${trader.id}`} label={t.paramsPayload} payload={payload} error={error} pending={save.isPending} onChange={value => { setPayload(value); setError(null) }} onSubmit={submit} t={t} /></Tabs></CardContent></Card>
 }
 
-function SignalCard({ trader, schema, token, t, onSaved }: { trader: Trader; schema?: JsonSchema; token: string; t: Copy; onSaved: () => void }) {
+function SignalCard({ trader, schema, auth, t, onSaved }: { trader: Trader; schema?: JsonSchema; auth: AuthSdk; t: Copy; onSaved: () => void }) {
   const [payload, setPayload] = useState(() => JSON.stringify(trader.signal, null, 2))
   const [error, setError] = useState<string | null>(null)
   const save = useMutation({
     mutationFn: (serialized: string) => {
       const signal = parseObject(serialized, t.signalJsonInvalid, t.signalJsonObject)
-      return request<Trader>(`/api/v1/traders/${trader.id}/signal`, token, { method: "PATCH", body: JSON.stringify({ signal }) })
+      return request<Trader>(`/api/v1/traders/${trader.id}/signal`, auth, { method: "PATCH", body: JSON.stringify({ signal }) })
     },
     onSuccess: () => { toast.success(t.signalSaved); onSaved() },
     onError: (requestError: Error) => { setError(requestError.message); showError(requestError) },
@@ -96,7 +96,7 @@ function SignalCard({ trader, schema, token, t, onSaved }: { trader: Trader; sch
   return <Card><CardHeader><CardTitle>{t.manualSignal}</CardTitle><CardDescription>{t.manualSignalDescription}</CardDescription></CardHeader><CardContent className="flex flex-col gap-4">{trader.enabled && <Alert><CircleAlertIcon /><AlertTitle>{t.manualSignalRiskTitle}</AlertTitle><AlertDescription>{t.manualSignalRisk}</AlertDescription></Alert>}<Tabs defaultValue="structured"><TabsList><TabsTrigger value="structured">{t.structured}</TabsTrigger><TabsTrigger value="json">JSON</TabsTrigger></TabsList><TabsContent value="structured"><SchemaValueList schema={schema} value={trader.signal} /></TabsContent><JsonEditorTab id={`signal-payload-${trader.id}`} label={t.signalPayload} description={`${t.signal}: ${trader.signal_token_prefix}…`} payload={payload} error={error} pending={save.isPending} onChange={value => { setPayload(value); setError(null) }} onSubmit={submit} t={t} /></Tabs><p className="text-xs text-muted-foreground">{t.usage}</p></CardContent></Card>
 }
 
-function SignalIntegrationCard({ trader, template, token, t }: { trader: Trader; template?: Template; token: string; t: Copy }) {
+function SignalIntegrationCard({ trader, template, auth, t }: { trader: Trader; template?: Template; auth: AuthSdk; t: Copy }) {
   const copy = signalIntegrationCopy(t)
   const [signalToken, setSignalToken] = useState<string | null>(null)
   const endpoint = `${window.location.origin}/signal/v1/traders/${trader.id}`
@@ -106,7 +106,7 @@ function SignalIntegrationCard({ trader, template, token, t }: { trader: Trader;
   const curl = buildSignalCurl(endpoint, visibleKey, payload)
   const aiBrief = signalToken ? buildSignalIntegrationBrief(copy, trader, endpoint, signalToken, payload, schema) : null
   const rotate = useMutation({
-    mutationFn: () => request<{ signal_token: string }>(`/api/v1/traders/${trader.id}/signal-token`, token, { method: "POST" }),
+    mutationFn: () => request<{ signal_token: string }>(`/api/v1/traders/${trader.id}/signal-token`, auth, { method: "POST" }),
     onSuccess: response => {
       setSignalToken(response.signal_token)
       void copyText(buildSignalIntegrationBrief(copy, trader, endpoint, response.signal_token, payload, schema), copy.aiCopied, copy.copyFailed)
