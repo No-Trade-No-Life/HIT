@@ -1,15 +1,15 @@
 import { useQuery } from "@tanstack/react-query"
 
 import { PageError } from "../components/trader-ui"
-import { request } from "../lib/api"
+import { request, type AuthSdk } from "../lib/api"
 import { formatBytes, formatTime } from "../lib/format"
 import type { Copy } from "../lib/i18n"
 import type { SystemResources } from "../lib/types"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 
-export function SystemResourcesPage({ token, t }: { token: string; t: Copy }) {
-  const resources = useQuery({ queryKey: ["system-resources", token], queryFn: () => request<SystemResources>("/api/v1/system/resources", token), refetchInterval: 5_000 })
+export function SystemResourcesPage({ auth, t }: { auth: AuthSdk; t: Copy }) {
+  const resources = useQuery({ queryKey: ["system-resources"], queryFn: () => request<SystemResources>("/api/v1/system/resources", auth), refetchInterval: 5_000 })
   if (resources.isPending) return <ResourceSkeleton />
   if (resources.error) return <PageError error={resources.error} />
   if (!resources.data) return <ResourceSkeleton />
