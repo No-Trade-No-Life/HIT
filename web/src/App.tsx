@@ -1,19 +1,17 @@
 import { useEffect, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useAuthMini } from "auth-mini-react-components"
-import { LinkitMyInfo, LinkitProvider, useLinkit } from "linkit-react-components"
-import { LayoutDashboardIcon, RefreshCwIcon, ShieldCheckIcon, WorkflowIcon, KeyRoundIcon, BotIcon, BookOpenIcon, HardDriveIcon, type LucideIcon } from "lucide-react"
-import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom"
+import { LinkitProvider, useLinkit } from "linkit-react-components"
+import { AppLayout, type AppNavGroup } from "@zccz14/ux"
+import { LayoutDashboardIcon, RefreshCwIcon, ShieldCheckIcon, WorkflowIcon, KeyRoundIcon, BotIcon, BookOpenIcon, HardDriveIcon } from "lucide-react"
+import { Navigate, Route, Routes, useLocation } from "react-router-dom"
 
 import { request, type AuthSdk } from "./lib/api"
 import { copy, initialLocale, negotiateLocale, type Copy } from "./lib/i18n"
 import type { Locale, Me } from "./lib/types"
 import { HitMark } from "./components/hit-mark"
 import { PageError } from "./components/trader-ui"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
-import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { AdminPage } from "./pages/admin-page"
@@ -42,7 +40,6 @@ function HitShell({ auth, locale, setLocale, t }: { auth: AuthSdk; locale: Local
   }, [languages, setLocale])
   const queryClient = useQueryClient()
   const location = useLocation()
-  const navigate = useNavigate()
   const me = useQuery({ queryKey: ["me"], queryFn: () => request<Me>("/api/v1/me", auth) })
   const refresh = () => void queryClient.invalidateQueries()
   if (me.isPending) return <div className="grid min-h-svh place-items-center"><Skeleton className="h-8 w-48" /></div>
@@ -51,11 +48,63 @@ function HitShell({ auth, locale, setLocale, t }: { auth: AuthSdk; locale: Local
   if (me.data.setup_required && location.pathname !== "/setup") return <Navigate to="/setup" replace />
   if (!me.data.setup_required && location.pathname === "/setup") return <Navigate to="/" replace />
 
-  return <TooltipProvider><SidebarProvider><Sidebar collapsible="icon"><SidebarHeader className="px-3 py-4"><div className="flex items-center gap-2 font-semibold"><HitMark className="size-7 shrink-0" /><span className="group-data-[collapsible=icon]:hidden">HIT</span></div></SidebarHeader><SidebarContent><SidebarGroup><SidebarGroupLabel>{locale === "zh" ? "工作台" : "Workspace"}</SidebarGroupLabel><SidebarGroupContent><SidebarMenu><NavItem icon={LayoutDashboardIcon} active={location.pathname === "/"} onClick={() => navigate("/")}>{t.overview}</NavItem><NavItem icon={WorkflowIcon} active={location.pathname.startsWith("/traders")} onClick={() => navigate("/traders")}>{t.traders}</NavItem><NavItem icon={BookOpenIcon} active={location.pathname === "/templates"} onClick={() => navigate("/templates")}>{t.templates}</NavItem><NavItem icon={KeyRoundIcon} active={location.pathname === "/credentials"} onClick={() => navigate("/credentials")}>{t.credentials}</NavItem><NavItem icon={BotIcon} active={location.pathname === "/linkit"} onClick={() => navigate("/linkit")}>{t.linkit}</NavItem></SidebarMenu></SidebarGroupContent></SidebarGroup>{me.data.is_root && <SidebarGroup><SidebarGroupLabel>{locale === "zh" ? "系统" : "System"}</SidebarGroupLabel><SidebarGroupContent><SidebarMenu><NavItem icon={ShieldCheckIcon} active={location.pathname === "/admin"} onClick={() => navigate("/admin")}>{t.admin}</NavItem><NavItem icon={HardDriveIcon} active={location.pathname === "/system-resources"} onClick={() => navigate("/system-resources")}>{t.systemResources}</NavItem></SidebarMenu></SidebarGroupContent></SidebarGroup>}</SidebarContent></Sidebar><SidebarInset><header className="sticky top-0 z-10 flex h-14 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur supports-backdrop-filter:bg-background/85"><SidebarTrigger /><Separator orientation="vertical" className="h-5" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{pageTitle(location.pathname, t)}</p></div>{me.data.is_root && <Badge variant="outline"><ShieldCheckIcon data-icon="inline-start" />{t.root}</Badge>}<Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={refresh} aria-label={t.refresh} />}><RefreshCwIcon /></TooltipTrigger><TooltipContent>{t.refresh}</TooltipContent></Tooltip><LinkitMyInfo /></header><main className="mx-auto w-full max-w-7xl p-4 md:p-6"><Routes><Route path="/" element={<OverviewPage auth={auth} t={t} onChanged={refresh} />} /><Route path="/traders" element={<TradersPage auth={auth} t={t} onChanged={refresh} />} /><Route path="/traders/:traderId" element={<TraderDetailPage auth={auth} t={t} onChanged={refresh} />} /><Route path="/templates" element={<TemplatesPage t={t} />} /><Route path="/credentials" element={<CredentialsPage auth={auth} t={t} onChanged={refresh} />} /><Route path="/linkit" element={<LinkitPage auth={auth} t={t} />} /><Route path="/admin" element={me.data.is_root ? <AdminPage auth={auth} t={t} onChanged={refresh} /> : <Navigate to="/" replace />} /><Route path="/system-resources" element={me.data.is_root ? <SystemResourcesPage auth={auth} t={t} /> : <Navigate to="/" replace />} /><Route path="/setup" element={<SetupPage auth={auth} t={t} onDone={refresh} />} /><Route path="*" element={<Navigate to="/" replace />} /></Routes></main></SidebarInset></SidebarProvider></TooltipProvider>
-}
+  const nav: AppNavGroup[] = [
+    {
+      label: locale === "zh" ? "工作台" : "Workspace",
+      items: [
+        { to: "/", label: t.overview, icon: <LayoutDashboardIcon /> },
+        { to: "/traders", label: t.traders, icon: <WorkflowIcon /> },
+        { to: "/templates", label: t.templates, icon: <BookOpenIcon /> },
+        { to: "/credentials", label: t.credentials, icon: <KeyRoundIcon /> },
+        { to: "/linkit", label: t.linkit, icon: <BotIcon /> },
+      ],
+    },
+    ...(me.data.is_root
+      ? [
+          {
+            label: locale === "zh" ? "系统" : "System",
+            items: [
+              { to: "/admin", label: t.admin, icon: <ShieldCheckIcon /> },
+              { to: "/system-resources", label: t.systemResources, icon: <HardDriveIcon /> },
+            ],
+          },
+        ]
+      : []),
+  ]
 
-function NavItem({ icon: Icon, active, onClick, children }: { icon: LucideIcon; active: boolean; onClick: () => void; children: string }) {
-  return <SidebarMenuItem><SidebarMenuButton isActive={active} onClick={onClick}><Icon /><span>{children}</span></SidebarMenuButton></SidebarMenuItem>
+  return (
+    <TooltipProvider>
+      <AppLayout
+        logo={{ light: <HitMark className="size-7 shrink-0" />, dark: <HitMark className="size-7 shrink-0" /> }}
+        title="HIT"
+        nav={nav}
+        pageTitle={pageTitle(location.pathname, t)}
+        headerSlot={
+          <Tooltip>
+            <TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={refresh} aria-label={t.refresh} />}>
+              <RefreshCwIcon />
+            </TooltipTrigger>
+            <TooltipContent>{t.refresh}</TooltipContent>
+          </Tooltip>
+        }
+      >
+        <div className="mx-auto w-full max-w-7xl">
+          <Routes>
+            <Route path="/" element={<OverviewPage auth={auth} t={t} onChanged={refresh} />} />
+            <Route path="/traders" element={<TradersPage auth={auth} t={t} onChanged={refresh} />} />
+            <Route path="/traders/:traderId" element={<TraderDetailPage auth={auth} t={t} onChanged={refresh} />} />
+            <Route path="/templates" element={<TemplatesPage t={t} />} />
+            <Route path="/credentials" element={<CredentialsPage auth={auth} t={t} onChanged={refresh} />} />
+            <Route path="/linkit" element={<LinkitPage auth={auth} t={t} />} />
+            <Route path="/admin" element={me.data.is_root ? <AdminPage auth={auth} t={t} onChanged={refresh} /> : <Navigate to="/" replace />} />
+            <Route path="/system-resources" element={me.data.is_root ? <SystemResourcesPage auth={auth} t={t} /> : <Navigate to="/" replace />} />
+            <Route path="/setup" element={<SetupPage auth={auth} t={t} onDone={refresh} />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </div>
+      </AppLayout>
+    </TooltipProvider>
+  )
 }
 
 function pageTitle(pathname: string, t: Copy) {
