@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use crate::db::{Database, DatabaseError, OkxSwapTargetLeverageState, Trader};
+use crate::linkit;
 use crate::templates as trader_templates;
 
 const RUN_INTERVAL: Duration = Duration::from_secs(1);
@@ -670,13 +671,11 @@ fn merged_config(credential_id: &str, params: &Value, signal: &Value) -> Result<
 }
 
 async fn notify_linkit(database: &Database, trader: &Trader, error: &str) {
-    let Ok(Some(settings)) = database.secret_linkit_settings(&trader.owner_id) else {
-        return;
-    };
-    let _ = reqwest::Client::new().post("https://linkit.ntnl.io/bot/v1/messages")
-        .bearer_auth(settings.bot_token)
-        .json(&json!({"recipient_username": settings.recipient_username, "body": format!("HIT 交易者「{}」执行失败：{}", trader.name, error)}))
-        .send().await;
+    let body = format!("HIT 交易者「{}」执行失败：{}", trader.name, error);
+    // RECOVERY: notification delivery is a separate boundary; a failed or
+    // skipped delivery must not change the trader's recorded outcome. Problems
+    // are recorded on the Linkit connection status instead.
+    let _ = linkit::notify(database, linkit::API_URL, &trader.owner_id, &body).await;
 }
 
 fn database_error(error: &DatabaseError) -> String {

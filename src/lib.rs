@@ -3,6 +3,7 @@
 mod crypto;
 mod db;
 mod engine;
+mod linkit;
 mod resources;
 pub mod templates;
 mod web;
