@@ -8,7 +8,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom"
 
 import { request, type AuthSdk } from "./lib/api"
 import { copy, initialLocale, negotiateLocale, type Copy } from "./lib/i18n"
-import type { Locale, Me } from "./lib/types"
+import type { LinkitStatus, Locale, Me } from "./lib/types"
 import { HitMark } from "./components/hit-mark"
 import { PageError } from "./components/trader-ui"
 import { Button } from "@/components/ui/button"
@@ -74,6 +74,7 @@ function HitShell({ auth, locale, setLocale, t }: { auth: AuthSdk; locale: Local
 
   return (
     <TooltipProvider>
+      <LinkitAutoEnsure auth={auth} />
       <AppLayout
         logo={{ light: <HitMark className="size-7 shrink-0" />, dark: <HitMark className="size-7 shrink-0" /> }}
         title="HIT"
@@ -105,6 +106,24 @@ function HitShell({ auth, locale, setLocale, t }: { auth: AuthSdk; locale: Local
       </AppLayout>
     </TooltipProvider>
   )
+}
+
+// HIT keeps one Linkit Bot per user; this silent call provisions or repairs
+// the connection on every workspace load, so notifications never need a setup
+// step and the switch stays the only notification control.
+function LinkitAutoEnsure({ auth }: { auth: AuthSdk }) {
+  const client = useQueryClient()
+  const ensure = useQuery({
+    queryKey: ["linkit-ensure", auth.session.getState().sessionId],
+    queryFn: () => request<LinkitStatus>("/api/v1/linkit", auth, { method: "POST" }),
+    retry: false,
+    staleTime: Infinity,
+  })
+  useEffect(() => {
+    if (!ensure.isSuccess) return
+    void client.invalidateQueries({ queryKey: ["linkit"] })
+  }, [client, ensure.isSuccess])
+  return null
 }
 
 function pageTitle(pathname: string, t: Copy) {

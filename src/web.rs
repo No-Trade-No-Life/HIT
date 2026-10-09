@@ -18,10 +18,11 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use crate::db::{
-    Credential, Database, DatabaseError, LinkitSettings, SignalHistory, Trader, TraderDraft,
+    Credential, Database, DatabaseError, LinkitStatus, SignalHistory, Trader, TraderDraft,
     TraderUpdate,
 };
 use crate::engine::{Template, TraderRuntime, template, templates, validate_configuration};
+use crate::linkit::{self, LinkitError};
 use crate::resources::{ResourceMonitor, SystemResourcesSnapshot};
 
 #[derive(Clone)]
@@ -67,7 +68,11 @@ pub fn router(database: Database, runtime: TraderRuntime, auth: AuthMiniLayer) -
         .route("/traders/{id}/signal", patch(set_trader_signal))
         .route("/traders/{id}/signal-history", get(list_signal_history))
         .route("/traders/{id}/signal-token", post(rotate_signal_token))
-        .route("/linkit", get(get_linkit).put(put_linkit))
+        .route(
+            "/linkit",
+            get(get_linkit).post(ensure_linkit).put(put_linkit),
+        )
+        .route("/linkit/test", post(test_linkit))
         .route_layer(auth);
     Router::new()
         .route("/api/health", get(health))
@@ -460,25 +465,43 @@ async fn list_signal_history(
 async fn get_linkit(
     State(state): State<AppState>,
     Extension(principal): Extension<AuthMiniPrincipal>,
-) -> Result<Json<Option<LinkitSettings>>, ApiError> {
-    Ok(Json(state.database.linkit_settings(&principal.subject)?))
+) -> Result<Json<LinkitStatus>, ApiError> {
+    Ok(Json(linkit::status(&state.database, &principal.subject)?))
+}
+
+// INVARIANT: the auth middleware verified this same `Authorization` header, so
+// this bearer belongs to the authenticated user; Linkit authorizes it as that
+// user when the Bot is provisioned on their account.
+async fn ensure_linkit(
+    State(state): State<AppState>,
+    Extension(principal): Extension<AuthMiniPrincipal>,
+    headers: HeaderMap,
+) -> Result<Json<LinkitStatus>, ApiError> {
+    let bearer =
+        bearer_token(&headers).ok_or_else(|| ApiError::unauthorized("Bearer token is required"))?;
+    Ok(Json(
+        linkit::ensure(&state.database, linkit::API_URL, &principal.subject, bearer).await?,
+    ))
 }
 
 async fn put_linkit(
     State(state): State<AppState>,
     Extension(principal): Extension<AuthMiniPrincipal>,
-    Json(input): Json<LinkitInput>,
-) -> Result<Json<LinkitSettings>, ApiError> {
-    if input.recipient_username.trim().is_empty() || !input.bot_token.starts_with("sk-") {
-        return Err(ApiError::bad_request(
-            "recipient_username and a Linkit sk- token are required",
-        ));
-    }
-    Ok(Json(state.database.put_linkit_settings(
+    Json(input): Json<EnabledInput>,
+) -> Result<Json<LinkitStatus>, ApiError> {
+    Ok(Json(linkit::set_enabled(
+        &state.database,
         &principal.subject,
-        input.recipient_username.trim(),
-        &input.bot_token,
+        input.enabled,
     )?))
+}
+
+async fn test_linkit(
+    State(state): State<AppState>,
+    Extension(principal): Extension<AuthMiniPrincipal>,
+) -> Result<Json<Value>, ApiError> {
+    linkit::send_test(&state.database, linkit::API_URL, &principal.subject).await?;
+    Ok(Json(json!({"sent": true})))
 }
 
 async fn external_signal(
@@ -562,11 +585,6 @@ struct ParamsInput {
 #[derive(Debug, Deserialize)]
 struct SignalInput {
     signal: Value,
-}
-#[derive(Debug, Deserialize)]
-struct LinkitInput {
-    recipient_username: String,
-    bot_token: String,
 }
 #[derive(Debug, Serialize)]
 struct Me {
@@ -703,6 +721,10 @@ enum ApiError {
     Forbidden(String),
     #[error("unauthorized: {0}")]
     Unauthorized(String),
+    #[error("conflict: {0}")]
+    Conflict(String),
+    #[error("service unavailable: {0}")]
+    Unavailable(String),
 }
 
 impl ApiError {
@@ -720,6 +742,20 @@ impl ApiError {
     }
 }
 
+impl From<LinkitError> for ApiError {
+    fn from(error: LinkitError) -> Self {
+        match error {
+            LinkitError::Database(error) => Self::Database(error),
+            LinkitError::Conflict(message) => Self::Conflict(message),
+            LinkitError::Forbidden(message) => Self::Forbidden(message),
+            LinkitError::Unavailable(message) => Self::Unavailable(message),
+            LinkitError::Request(error) => {
+                Self::Unavailable(format!("Linkit request failed: {error}"))
+            }
+        }
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = match &self {
@@ -728,6 +764,8 @@ impl IntoResponse for ApiError {
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
         };
         let message = match &self {
             Self::Database(_) | Self::Resources(_) => "internal state error".to_owned(),

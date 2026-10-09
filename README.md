@@ -40,7 +40,7 @@ OKX Swap 整数净头寸模板要求 `net_mode`，每个实例管理一个合约
 - 前端使用 `auth-mini-react-components` 对接 [Auth Mini](https://auth.ntnl.io)。登录令牌同时包含 `hit.ntnl.io`（HIT 回调主机名）和 `linkit.ntnl.io` 两个 JWT audience（受众，即允许接收该令牌的服务），以便用户在 Linkit 集成中复用同一登录会话。
 - 后端使用 `auth-mini-axum` 直接验证 Auth Mini JWKS 与 `hit.ntnl.io` audience。
 - 第一个登录并确认初始化的用户成为 `root_user_id`，存放于 SQLite `app_meta`。root 可以查看所有用户的非机密资源；普通用户只能管理自己的资源。
-- Linkit 通知是每位用户独立配置的 Bot 凭证。交易执行失败时，HIT 通过 [Linkit Bot API](https://linkit.ntnl.io) 向该用户配置的用户名发送私信。
+- Linkit 通知由 HIT 自动 ensure：为每位用户创建并维护一个 [Linkit](https://linkit.ntnl.io) 机器人（Bot Token 加密存储），无需手动配置；开启通知开关后，交易执行失败会向用户自己的 Linkit 私信发送消息。
 
 ## 系统资源
 
