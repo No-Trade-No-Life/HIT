@@ -1142,6 +1142,33 @@ mod tests {
     }
 
     #[test]
+    fn opening_a_database_with_the_legacy_linkit_table_rebuilds_it() -> Result<(), Box<dyn Error>> {
+        let state_directory = tempdir()?;
+        {
+            let database = Database::open(state_directory.path())?;
+            database.connection()?.execute_batch(
+                "DROP TABLE linkit_settings;
+                 CREATE TABLE linkit_settings (
+                     owner_id TEXT PRIMARY KEY NOT NULL,
+                     recipient_username TEXT NOT NULL,
+                     bot_token_ciphertext TEXT NOT NULL,
+                     updated_at INTEGER NOT NULL
+                 );
+                 INSERT INTO linkit_settings(owner_id, recipient_username, bot_token_ciphertext, updated_at)
+                 VALUES ('owner', 'alice', 'legacy-ciphertext', 0);",
+            )?;
+        }
+
+        let database = Database::open(state_directory.path())?;
+        database.save_linkit_bot("owner", "bot-1", "sk-token", "alice")?;
+        let status = database.linkit_status("owner")?;
+        assert!(status.configured);
+        assert_eq!(status.bot_id.as_deref(), Some("bot-1"));
+        assert_eq!(status.recipient_username.as_deref(), Some("alice"));
+        Ok(())
+    }
+
+    #[test]
     fn signal_patch_history_coalesces_identical_payloads() -> Result<(), Box<dyn Error>> {
         let state_directory = tempdir()?;
         let database = Database::open(state_directory.path())?;
