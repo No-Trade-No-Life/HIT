@@ -76,7 +76,7 @@ function HitShell({ auth, locale, setLocale, t }: { auth: AuthSdk; locale: Local
     <TooltipProvider>
       <LinkitAutoEnsure auth={auth} />
       <AppLayout
-        logo={{ light: <HitMark className="size-7 shrink-0" />, dark: <HitMark className="size-7 shrink-0" /> }}
+        logo={<HitMark className="size-7 shrink-0" />}
         title="HIT"
         nav={nav}
         pageTitle={pageTitle(location.pathname, t)}
