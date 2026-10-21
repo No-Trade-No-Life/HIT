@@ -69,7 +69,7 @@ curl --fail-with-body https://hit.ntnl.io/signal/v1/traders/TRADER_UUID \
 需要 Rust 1.93 与 Node.js 24：
 
 ```bash
-cd web && npm ci && npm run build
+cd web && pnpm install --frozen-lockfile && pnpm run build
 cd .. && cargo test --all-targets --all-features
 cargo run
 ```
